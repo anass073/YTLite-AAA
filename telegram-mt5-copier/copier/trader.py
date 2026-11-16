@@ -467,13 +467,18 @@ class Trader:
         c = Command(command) if isinstance(command, str) else command
         if c.name == "breakeven":
             report = self.breakeven(tag)
-            # The channel is already in profit on this trade, so orders of ours that never
-            # filled would now be a late entry with the full stop: remove them. Without a
-            # reply we only do this when a single signal is active, to avoid guessing.
+            # Orders of ours that have not filled yet are left waiting by default: this
+            # channel says "set breakeven" seconds after a signal, long before price has
+            # come back to the entry zone. With breakeven_cancels_pending they are removed
+            # instead (only when a single signal is active, to avoid guessing).
             pending = self._mine(self.mt5.orders_get(), tag)
             active = {self._signal_of(i.comment) for i in pending + self._mine(self.mt5.positions_get(), tag)}
-            if pending and len(active) == 1:
+            if pending and self.cfg.breakeven_cancels_pending and len(active) == 1:
                 report += self.cancel_pending(tag)
+            elif pending:
+                if report == ["no open positions to move to breakeven"]:
+                    report = []
+                report.append(f"{len(pending)} order(s) not filled yet - left waiting at the entry zone")
         elif c.name == "move_sl":
             report = self.move_sl(c.price, tag)
         elif c.name == "take_tp":

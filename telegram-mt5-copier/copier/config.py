@@ -41,6 +41,7 @@ class TradingCfg:
     deviation_points: int = 30                  # max slippage on market orders
     limit_if_away_from_entry: bool = True       # price not at the entry zone yet -> place a limit order there
     pending_expiry_minutes: int = 120           # cancel unfilled limit/stop orders after this; 0 = never
+    breakeven_cancels_pending: bool = False     # "set breakeven" also removes this signal's orders that have not filled
     cancel_closes_positions: bool = False       # "cancel it" also closes already-open trades
     require_tp: bool = False
     magic: int = 770077

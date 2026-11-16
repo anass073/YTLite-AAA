@@ -190,9 +190,17 @@ def test_expired_pending_orders_are_cancelled():
 def test_breakeven_cancels_unfilled_orders_of_the_same_signal():
     m = FakeMT5(); m.open = [pos(1, "tg-42")]
     m.orders_get = lambda: [order(9, "tg-42", 60)]
-    t, _ = make(m)
+    t, _ = make(m, breakeven_cancels_pending=True)
     t.manage("breakeven")
     assert [r["action"] for r in m.sent] == [6, 8]
+
+
+def test_breakeven_leaves_unfilled_orders_waiting_by_default():
+    m = FakeMT5()
+    m.orders_get = lambda: [order(1, "tg-42-1", 16), order(2, "tg-42-2", 16), order(3, "tg-42-3", 16)]
+    t, _ = make(m)
+    assert t.manage("breakeven") == ["3 order(s) not filled yet - left waiting at the entry zone"]
+    assert m.sent == []
 
 
 def test_breakeven_without_reply_leaves_other_signals_orders_alone():

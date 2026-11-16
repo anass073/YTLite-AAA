@@ -78,7 +78,7 @@ status updates such as "TP1 hit", are ignored.
 
   | Message | What the bot does |
   |---|---|
-  | `Set breakeven now` / `Move SL to BE` | Stop loss moved to the entry price. If price has not passed the entry yet, it is queued and applied the moment it has. That signal's orders that never filled are removed. |
+  | `Set breakeven now` / `Move SL to BE` | Stop loss moved to the entry price. If price has not passed the entry yet, it is queued and applied the moment it has. Orders that have not filled yet stay waiting (`breakeven_cancels_pending: true` removes them instead). |
   | `Move SL at 3950` | Stop moved to that price on the open positions. Only ever tightens a stop. |
   | `Take TP1 now` | Closes the TP1 position at market. |
   | `Take TP2 at 3947` | Moves that position's target; closes it if price is already there. |
