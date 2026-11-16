@@ -103,13 +103,19 @@ def build_report(deals, orders, positions, balance: float, currency: str, magic:
         out.append(f"Signals not traded:  {sum(skipped.values())}   ({detail})")
 
     other = sum(_net(d) for d in trades if d.position_id not in owner)
-    moved = sum(_net(d) for d in deals if d.type not in (0, 1))
+    credit = sum(_net(d) for d in deals if d.type == 3)             # broker credit/bonus: not part of the balance
+    moved = sum(_net(d) for d in deals if d.type not in (0, 1, 3))
     if abs(other) >= 0.005:
         out.append(f"Trades not opened by the bot:  {money(other)}")
     if abs(moved) >= 0.005:
         out.append(f"Deposits / withdrawals:        {money(moved)}")
-    start = balance - sum(_net(d) for d in deals)
-    out.append(f"Balance:             {start:.2f} -> {balance:.2f} {currency}")
+    if abs(credit) >= 0.005:
+        out.append(f"Broker credit / bonus:         {money(credit)}   (not counted in the balance)")
+    start = balance - sum(_net(d) for d in deals if d.type != 3)
+    if start < -0.005:      # the history does not add up (e.g. entries the broker books differently)
+        out.append(f"Balance now:         {balance:.2f} {currency}")
+    else:
+        out.append(f"Balance:             {start:.2f} -> {balance:.2f} {currency}")
     return "\n".join(out)
 
 

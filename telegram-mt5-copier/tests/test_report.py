@@ -66,3 +66,15 @@ def test_skipped_reasons_from_log():
 """
     assert skipped_from_log(log, datetime(2026, 11, 1)) == {
         "typo in the signal": 1, "price already too far towards the stop": 1, "too many trades open": 1}
+
+
+def test_credit_is_kept_out_of_the_balance_and_impossible_start_is_not_shown():
+    op = lambda type, amount: NS(position_id=0, type=type, entry=0, profit=amount, swap=0.0, commission=0.0,
+                                 fee=0.0, comment="", magic=0, time=T, symbol="")
+    manual = [deal(50, 0, 0, magic=0), deal(50, 1, 1, -127.10, magic=0, time=T + 100)]
+    text = build_report([op(2, 327.10), op(3, 47.90), *manual], [], [], 200.0, "EUR", 770077)
+    assert "Deposits / withdrawals:        +327.10 EUR" in text
+    assert "Broker credit / bonus:         +47.90 EUR" in text
+    assert "Balance:             0.00 -> 200.00 EUR" in text
+    text = build_report([op(2, 375.0), *manual], [], [], 200.0, "EUR", 770077)     # does not add up
+    assert "Balance now:         200.00 EUR" in text and "->" not in text
