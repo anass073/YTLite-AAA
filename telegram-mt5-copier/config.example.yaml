@@ -21,9 +21,11 @@ trading:
   max_lot: 1.0                   # hard cap on total lots per signal
   max_tps: 3                     # one position per take profit, at most this many
   max_open_trades: 5             # bot stops opening trades above this
-  max_entry_drift: 0.5           # skip if price already moved more than this fraction of the SL distance
+  max_daily_loss_percent: 20.0   # no new trades once the account is down this much today (0 = off)
+  max_entry_drift: 0.5           # skip if price already ran towards the SL by more than this fraction of the SL distance
+  market_entry_tolerance: 0.15   # enter at market if price is this close to the entry zone (fraction of the SL distance)
   deviation_points: 30           # max slippage for market orders
-  limit_if_away_from_entry: true # price not at the entry zone yet -> place a limit order at the zone
+  limit_if_away_from_entry: true # price not at the entry zone yet -> limit order at the edge of the zone
   cancel_closes_positions: false # "cancel it" removes pending orders; true = also close open trades
   pending_expiry_minutes: 120    # cancel unfilled limit/stop orders after N minutes (0 = never)
   require_tp: false

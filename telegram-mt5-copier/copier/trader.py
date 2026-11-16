@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import datetime, timedelta
 
 from .config import Mt5Cfg, TradingCfg
 from .parser import Signal
@@ -78,6 +79,16 @@ class Trader:
             vol = balance * self.cfg.risk_percent / 100 / abs(loss)
         return min(vol, self.cfg.max_lot)
 
+    def daily_loss_percent(self) -> float:
+        """How far the account (closed trades + open ones) is down since midnight, in %."""
+        midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        deals = self.mt5.history_deals_get(midnight, datetime.now() + timedelta(days=1)) or ()
+        realized = sum(d.profit + d.swap + d.commission + getattr(d, "fee", 0.0)
+                       for d in deals if d.type in (0, 1))          # buy/sell deals, not deposits
+        acc = self.mt5.account_info()
+        start = acc.balance - realized
+        return (start - acc.equity) / start * 100 if start > 0 else 0.0
+
     def _filling(self, info) -> int:
         if info.filling_mode & 1:
             return self.mt5.ORDER_FILLING_FOK
@@ -111,20 +122,31 @@ class Trader:
 
         if self._open_count() >= cfg.max_open_trades:
             raise Skip(f"max_open_trades ({cfg.max_open_trades}) reached")
+        if cfg.max_daily_loss_percent > 0:
+            down = self.daily_loss_percent()
+            if down >= cfg.max_daily_loss_percent:
+                raise Skip(f"daily loss limit reached (down {down:.1f}% today, "
+                           f"limit {cfg.max_daily_loss_percent}%)")
 
         is_buy = sig.side == "buy"
         market = tick.ask if is_buy else tick.bid
-        pending = sig.pending
+        pending, price = sig.pending, sig.entry
         if not pending and sig.entry is not None:
-            drift, allowed = abs(market - sig.entry), cfg.max_entry_drift * abs(sig.entry - sig.sl)
-            if drift > allowed:
-                # Price is on the profit side of the entry zone: wait for it to come
-                # back with a limit order. On the stop-loss side: too late, skip.
-                waiting_for_zone = (market < sig.entry) != is_buy
-                if not (waiting_for_zone and cfg.limit_if_away_from_entry):
-                    raise Skip(f"price {market} moved too far from signal entry {sig.entry}")
-                pending = True
-        price = sig.entry if pending else market
+            d = 1 if is_buy else -1
+            stop = abs(sig.entry - sig.sl)
+            low = sig.entry if sig.entry_low is None else sig.entry_low
+            high = sig.entry if sig.entry_high is None else sig.entry_high
+            near = high if is_buy else low      # edge of the zone price reaches first on a pullback
+            if (sig.entry - market) * d > cfg.max_entry_drift * stop:
+                raise Skip(f"price {market} moved too far from signal entry {sig.entry} towards the stop")
+            if (market - near) * d > cfg.market_entry_tolerance * stop:
+                # Price is on the profit side and has not come back to the zone:
+                # wait for it with a limit order at the edge it will touch first.
+                if not cfg.limit_if_away_from_entry:
+                    raise Skip(f"price {market} is not at the entry zone {low}-{high}")
+                pending, price = True, near
+        if not pending:
+            price = market
 
         if (sig.sl < price) != is_buy:
             raise Skip(f"price {price} is already past the stop loss {sig.sl}")
@@ -247,6 +269,45 @@ class Trader:
             if tick is not None and tick.time - o.time_setup > limit:
                 req = {"action": self.mt5.TRADE_ACTION_REMOVE, "order": o.ticket}
                 out.append(self._send(req, f"cancel expired pending order on {o.symbol} #{o.ticket}"))
+        for line in out:
+            log.info(line)
+        return out
+
+    def update_levels(self, tag: str, old: Signal, new: Signal) -> list[str]:
+        """The channel edited a signal we traded: move its SL / TPs to the new values."""
+        self._ensure_connected()
+        mt5 = self.mt5
+        same_count = len(old.tps) == len(new.tps)
+        out = []
+
+        def levels(item, keep_sl: bool):
+            digits = mt5.symbol_info(item.symbol).digits
+            sl = item.sl if keep_sl else round(new.sl, digits)
+            tp = item.tp
+            if same_count:
+                for before, after in zip(old.tps, new.tps):
+                    if round(before, digits) == round(item.tp, digits):
+                        tp = round(after, digits)
+                        break
+            return sl, tp
+
+        for p in self._mine(mt5.positions_get(), tag):
+            # Never loosen a stop that is already at breakeven or better.
+            is_buy = p.type == mt5.POSITION_TYPE_BUY
+            secured = bool(p.sl) and ((p.sl >= p.price_open) if is_buy else (p.sl <= p.price_open))
+            sl, tp = levels(p, keep_sl=secured)
+            if (sl, tp) != (p.sl, p.tp):
+                req = {"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket, "symbol": p.symbol,
+                       "sl": sl, "tp": tp}
+                out.append(self._send(req, f"update {p.symbol} #{p.ticket} to sl={sl} tp={tp or '-'}"))
+        for o in self._mine(mt5.orders_get(), tag):
+            sl, tp = levels(o, keep_sl=False)
+            if (sl, tp) != (o.sl, o.tp):
+                req = {"action": mt5.TRADE_ACTION_MODIFY, "order": o.ticket, "price": o.price_open,
+                       "sl": sl, "tp": tp, "type_time": o.type_time, "expiration": o.time_expiration}
+                out.append(self._send(req, f"update pending {o.symbol} #{o.ticket} to sl={sl} tp={tp or '-'}"))
+        if out and not same_count:
+            out.append("the number of take profits changed - only the stop loss was updated")
         for line in out:
             log.info(line)
         return out

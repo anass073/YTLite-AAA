@@ -77,6 +77,9 @@ def test_channel_format():
     s = ok("1. Sell XAUUSD 3855-3858⚡\n\nSL : 3863\n\nTP1 : 3850\nTP2 : 3845\nTP3 : 3810")
     assert (s.side, s.symbol, s.entry, s.sl, s.tps, s.pending) == (
         "sell", "XAUUSD", 3856.5, 3863.0, [3850.0, 3845.0, 3810.0], False)
+    assert (s.entry_low, s.entry_high) == (3855.0, 3858.0)
+    single = ok("buy gold 2650 sl 2640 tp 2660")
+    assert (single.entry_low, single.entry_high) == (2650.0, 2650.0)
 
 
 @pytest.mark.parametrize("text,expected", [

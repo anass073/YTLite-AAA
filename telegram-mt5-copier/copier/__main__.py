@@ -55,13 +55,46 @@ async def run(cfg, args) -> None:
     log.info("Mode: %s", "DRY RUN - no orders will be sent" if cfg.trading.dry_run else "LIVE TRADING")
 
     done: set[tuple[int, int]] = set()
+    traded: dict[tuple[int, int], object] = {}      # signals we acted on, to follow later edits
     lock = asyncio.Lock()
+
+    async def notify(text: str) -> None:
+        if cfg.telegram.notify:
+            try:
+                await client.send_message("me", text)
+            except Exception:
+                log.exception("Could not send notification")
+
+    async def run_job(title: str, job, quiet_if_empty: bool = False) -> None:
+        log.info(title)
+        async with lock:
+            try:
+                report = await asyncio.to_thread(job)
+            except Skip as e:
+                report = [f"SKIPPED: {e}"]
+                log.warning(report[0])
+            except Exception as e:  # keep listening whatever happens
+                report = [f"ERROR: {e!r}"]
+                log.exception("Execution failed")
+        if report or not quiet_if_empty:
+            await notify(f"{title}\n" + "\n".join(report))
 
     async def handle(event):
         if event.chat_id not in chat_ids:
             return
         key = (event.chat_id, event.id)
         if key in done:
+            # An edit of a message we already acted on: follow changed SL / TP levels.
+            old = traded.get(key)
+            new = parse_signal(event.raw_text)[0] if old else None
+            if new is None or (new.sl, new.tps) == (old.sl, old.tps):
+                return
+            if (new.side, new.symbol) != (old.side, old.symbol):
+                log.warning("Signal %s was edited into a different trade - not followed", event.id)
+                return
+            traded[key] = new
+            await run_job(f"Signal edited: sl {old.sl} -> {new.sl}, tps {old.tps} -> {new.tps}",
+                          lambda: trader.update_levels(f"tg-{event.id}", old, new), quiet_if_empty=True)
             return
         age = (datetime.now(timezone.utc) - event.date).total_seconds()
         if age > cfg.telegram.max_signal_age_seconds:
@@ -76,31 +109,13 @@ async def run(cfg, args) -> None:
             return
         done.add(key)
         if sig:
-            title = str(sig)
-            job = lambda: trader.execute(sig, tag=f"tg-{event.id}")
+            traded[key] = sig
+            await run_job(str(sig), lambda: trader.execute(sig, tag=f"tg-{event.id}"))
         else:
             # A reply to a signal only affects that signal's trades; otherwise all of the bot's trades.
             replied = getattr(event.message, "reply_to_msg_id", None)
-            title = f"Instruction: {command}" + (" (for the replied-to signal)" if replied else "")
-            job = lambda: trader.manage(command, f"tg-{replied}" if replied else None)
-        log.info(title)
-        async with lock:
-            try:
-                report = await asyncio.to_thread(job)
-            except Skip as e:
-                report = [f"SKIPPED: {e}"]
-                log.warning(report[0])
-            except Exception as e:  # keep listening whatever happens
-                report = [f"ERROR: {e!r}"]
-                log.exception("Execution failed")
-        await notify(f"{title}\n" + "\n".join(report))
-
-    async def notify(text: str) -> None:
-        if cfg.telegram.notify:
-            try:
-                await client.send_message("me", text)
-            except Exception:
-                log.exception("Could not send notification")
+            await run_job(f"Instruction: {command}" + (" (for the replied-to signal)" if replied else ""),
+                          lambda: trader.manage(command, f"tg-{replied}" if replied else None))
 
     async def sweep():
         """Remove pending orders that outlived pending_expiry_minutes."""

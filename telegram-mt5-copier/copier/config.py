@@ -33,7 +33,9 @@ class TradingCfg:
     max_lot: float = 1.0                        # hard cap on total lots per signal
     max_tps: int = 3                            # split into at most this many positions
     max_open_trades: int = 5                    # positions + pending orders opened by this bot
-    max_entry_drift: float = 0.5                # skip if price moved > this fraction of the SL distance
+    max_entry_drift: float = 0.5                # skip if price ran towards the SL by > this fraction of the SL distance
+    market_entry_tolerance: float = 0.15        # enter at market if price is within this fraction of the SL distance of the zone
+    max_daily_loss_percent: float = 20.0        # no new trades once the account is down this much today; 0 = off
     deviation_points: int = 30                  # max slippage on market orders
     limit_if_away_from_entry: bool = True       # price not at the entry zone yet -> place a limit order there
     pending_expiry_minutes: int = 120           # cancel unfilled limit/stop orders after this; 0 = never

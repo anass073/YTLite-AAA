@@ -68,9 +68,10 @@ status updates such as "TP1 hit", are ignored.
 - **Sizing** – `risk_percent` of balance for the *whole* signal (or `fixed_lot`),
   capped by `max_lot`, split into one position per take profit (up to `max_tps`).
   If the size is too small to split, it opens one position at TP1.
-- **Entry price or zone** (`Sell XAUUSD 3855-3858`): if price is at the zone, it enters
-  at market. If price has not reached the zone yet, it places a limit order at the
-  middle of the zone (`limit_if_away_from_entry`). If price has already run towards
+- **Entry price or zone** (`Sell XAUUSD 3855-3858`): if price is in or right next to
+  the zone, it enters at market. If price has not come back to the zone yet, it places
+  a limit order at the edge of the zone price will touch first (3855 for that sell),
+  so it fills whenever the channel's own entry does. If price has already run towards
   the stop loss by more than `max_entry_drift` × the stop distance, it skips.
 - **Limit/stop signals** become pending orders at the posted entry.
 - **Follow-up messages** are acted on:
@@ -81,6 +82,12 @@ status updates such as "TP1 hit", are ignored.
 
   If the message is a reply to a signal, only that signal's trades are touched;
   otherwise all trades opened by the bot. Trades you open by hand are never touched.
+- **Edited signals** – if the channel edits the SL or TPs of a signal the bot traded,
+  its positions and pending orders are moved to the new levels (a stop already at
+  breakeven is left alone). Only works for signals traded since the bot last started.
+- **Daily loss limit** – once the account is down `max_daily_loss_percent` since
+  midnight (closed and open trades, including ones you placed by hand), new signals
+  are skipped until the next day. Open trades are left alone.
 - **Unfilled orders expire** after `pending_expiry_minutes` (default 120), so a limit
   order the market never reached cannot fill hours later.
 - **Keeps itself running** – reconnects to MT5 if the terminal restarts, `run.bat`

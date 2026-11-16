@@ -59,6 +59,8 @@ class Signal:
     tps: list[float] = field(default_factory=list)
     entry: float | None = None     # None = "at market, no reference price given"
     pending: bool = False          # True when the signal says limit / stop
+    entry_low: float | None = None   # edges of the entry zone ("3855-3858");
+    entry_high: float | None = None  # both equal `entry` for a single price
 
     def __str__(self) -> str:
         kind = "PENDING" if self.pending else "MARKET"
@@ -114,13 +116,15 @@ def parse_signal(text: str) -> tuple[Signal | None, str]:
     # Entry = first plausible price that is not an SL/TP level or part of a symbol name.
     rest = _blank(text, SL_RE, TP_RE, re.compile(OTHER_RE.pattern, re.I))
     plausible = lambda p: abs(p - sl) / sl < 0.2
-    entry = None
+    entry = low = high = None
     for m in CANDIDATE_RE.finditer(rest):
         a = float(m.group(1))
         if not plausible(a):
             continue
         b = float(m.group(2)) if m.group(2) else None
-        entry = (a + b) / 2 if b is not None and plausible(b) else a
+        if b is None or not plausible(b):
+            b = a
+        low, high, entry = min(a, b), max(a, b), (a + b) / 2
         break
 
     pending = bool(side_m.group(2))
@@ -134,7 +138,7 @@ def parse_signal(text: str) -> tuple[Signal | None, str]:
         return None, f"take profit on the wrong side for a {side}"
     tps.sort(reverse=not is_buy)
 
-    return Signal(side, symbol, sl, tps, entry, pending), ""
+    return Signal(side, symbol, sl, tps, entry, pending, low, high), ""
 
 
 BREAKEVEN_RE = re.compile(

@@ -26,7 +26,11 @@ class FakeMT5:
                   volume_step=0.01, filling_mode=2)
 
     def symbol_info_tick(self, name): return NS(bid=self.bid, ask=self.ask, time=1_700_000_000)
-    def account_info(self): return NS(balance=self.balance, login=1, server="x", currency="USD")
+    equity, deals = None, ()
+    def account_info(self):
+        return NS(balance=self.balance, equity=self.balance if self.equity is None else self.equity,
+                  login=1, server="x", currency="USD")
+    def history_deals_get(self, start, end): return self.deals
     def positions_get(self): return self.open
     def orders_get(self): return []
     def last_error(self): return (0, "")
@@ -110,7 +114,8 @@ def test_detect_suffix():
 
 # --- entry zones and follow-up instructions ----------------------------------
 FakeMT5.TRADE_ACTION_SLTP, FakeMT5.TRADE_ACTION_REMOVE, FakeMT5.POSITION_TYPE_BUY = 6, 8, 0
-ZONE = dict(side="sell", symbol="XAUUSD", sl=3863.0, tps=[3850.0, 3845.0, 3810.0], entry=3856.5)
+ZONE = dict(side="sell", symbol="XAUUSD", sl=3863.0, tps=[3850.0, 3845.0, 3810.0], entry=3856.5,
+            entry_low=3855.0, entry_high=3858.0)
 
 
 def test_zone_market_when_price_is_in_zone():
@@ -124,8 +129,8 @@ def test_zone_market_when_price_is_in_zone():
 def test_zone_limit_when_price_has_not_reached_it():
     t, m = make(FakeMT5(bid=3851.0, ask=3851.2), risk_percent=3.0)
     t.execute(Signal(**ZONE))
-    # sell limit at the zone; TP1 3850 still valid relative to the entry
-    assert [(r["action"], r["type"], r["price"]) for r in m.sent] == [(5, 3, 3856.5)] * 3
+    # sell limit at the edge of the zone price reaches first
+    assert [(r["action"], r["type"], r["price"]) for r in m.sent] == [(5, 3, 3855.0)] * 3
 
 
 def test_zone_skipped_when_price_ran_towards_stop():
@@ -224,3 +229,50 @@ def test_no_broker_connection_is_skipped():
     t, _ = make(m)
     with pytest.raises(Skip, match="no connection"):
         t.execute(Signal("buy", "XAUUSD", 2640.0, [2660.0]))
+
+
+# --- zone edges, daily loss limit, edited signals ----------------------------------
+FakeMT5.TRADE_ACTION_MODIFY = 7
+
+
+def test_just_below_zone_still_enters_at_market():
+    t, m = make(FakeMT5(bid=3854.5, ask=3854.7), risk_percent=3.0)     # 0.5 under the zone, tolerance ~1
+    t.execute(Signal(**ZONE))
+    assert {r["action"] for r in m.sent} == {1}
+
+
+def test_buy_zone_limit_sits_at_upper_edge():
+    t, m = make(FakeMT5(bid=3870.0, ask=3870.2), risk_percent=3.0)
+    t.execute(Signal("buy", "XAUUSD", 3850.0, [3862.0, 3867.0], 3856.5, False, 3855.0, 3858.0))
+    assert [(r["action"], r["type"], r["price"]) for r in m.sent] == [(5, 2, 3858.0)] * 2
+
+
+def test_daily_loss_limit_blocks_new_trades():
+    m = FakeMT5(balance=170.0)
+    m.deals = [NS(profit=-30.0, swap=0.0, commission=0.0, type=1), NS(profit=5000.0, swap=0, commission=0, type=2)]
+    m.equity = 160.0                              # started at 200, now 160 with open trades -> down 20%
+    t, _ = make(m, max_daily_loss_percent=20.0, risk_mode="fixed")
+    assert round(t.daily_loss_percent(), 6) == 20.0
+    with pytest.raises(Skip, match="daily loss limit"):
+        t.execute(Signal("buy", "XAUUSD", 2640.0, [2660.0]))
+    t2, m2 = make(m, max_daily_loss_percent=25.0, risk_mode="fixed")
+    t2.execute(Signal("buy", "XAUUSD", 2640.0, [2660.0]))
+    assert m.sent
+
+
+def test_edited_signal_updates_levels_but_keeps_breakeven():
+    old, new = Signal(**ZONE), Signal(**{**ZONE, "sl": 3865.0, "tps": [3851.0, 3845.0, 3810.0]})
+    m = FakeMT5()
+    m.open = [pos(1, "tg-42"), pos(2, "tg-42"), pos(3, "tg-42"), pos(4, "tg-99")]
+    m.open[0].tp = 3850.0                          # the TP1 position
+    m.open[1].sl = 3856.0                          # already at breakeven
+    m.orders_get = lambda: [NS(ticket=9, magic=770077, comment="tg-42", symbol="XAUUSD", sl=3863.0,
+                               tp=3845.0, price_open=3855.0, type_time=0, time_expiration=0)]
+    t, _ = make(m)
+    t.update_levels("tg-42", old, new)
+    assert m.sent == [
+        {"action": 6, "position": 1, "symbol": "XAUUSD", "sl": 3865.0, "tp": 3851.0},
+        {"action": 6, "position": 3, "symbol": "XAUUSD", "sl": 3865.0, "tp": 3810.0},
+        {"action": 7, "order": 9, "price": 3855.0, "sl": 3865.0, "tp": 3845.0, "type_time": 0, "expiration": 0},
+    ]
+    assert t.update_levels("tg-nothing", old, new) == []
