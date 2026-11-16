@@ -56,6 +56,7 @@ async def run(cfg, args) -> None:
 
     done: set[tuple[int, int]] = set()
     traded: dict[tuple[int, int], object] = {}      # signals we acted on, to follow later edits
+    unusable: set[tuple[int, int]] = set()          # seen live but not understood; an edit may fix them
     lock = asyncio.Lock()
 
     async def notify(text: str) -> None:
@@ -97,7 +98,7 @@ async def run(cfg, args) -> None:
                           lambda: trader.update_levels(f"tg-{event.id}", old, new), quiet_if_empty=True)
             return
         age = (datetime.now(timezone.utc) - event.date).total_seconds()
-        if age > cfg.telegram.max_signal_age_seconds:
+        if age > (cfg.telegram.edit_grace_seconds if key in unusable else cfg.telegram.max_signal_age_seconds):
             # e.g. an old signal edited to add "TP1 hit". If this shows for brand new
             # messages, the PC clock is wrong.
             log.info("Ignored message %s: %.0f seconds old", event.id, age)
@@ -106,6 +107,11 @@ async def run(cfg, args) -> None:
         commands = [] if sig else parse_commands(event.raw_text)
         if sig is None and not commands:
             log.info("Ignored message %s: %s", event.id, why)
+            if "wrong side" in why and key not in unusable:
+                # Looks like a signal with a typo in it: tell the user, we cannot guess the real level.
+                await notify(f"Signal NOT traded - {why}. It will be traded if the channel corrects "
+                             f"the message within {cfg.telegram.edit_grace_seconds // 60} minutes.")
+            unusable.add(key)
             return
         done.add(key)
         if sig:
