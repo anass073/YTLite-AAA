@@ -65,7 +65,10 @@ async def run(cfg, args) -> None:
             return
         age = (datetime.now(timezone.utc) - event.date).total_seconds()
         if age > cfg.telegram.max_signal_age_seconds:
-            return  # e.g. an old signal edited to add "TP1 hit"
+            # e.g. an old signal edited to add "TP1 hit". If this shows for brand new
+            # messages, the PC clock is wrong.
+            log.info("Ignored message %s: %.0f seconds old", event.id, age)
+            return
         sig, why = parse_signal(event.raw_text)
         command = None if sig else parse_command(event.raw_text)
         if sig is None and command is None:
@@ -90,11 +93,29 @@ async def run(cfg, args) -> None:
             except Exception as e:  # keep listening whatever happens
                 report = [f"ERROR: {e!r}"]
                 log.exception("Execution failed")
+        await notify(f"{title}\n" + "\n".join(report))
+
+    async def notify(text: str) -> None:
         if cfg.telegram.notify:
             try:
-                await client.send_message("me", f"{title}\n" + "\n".join(report))
+                await client.send_message("me", text)
             except Exception:
                 log.exception("Could not send notification")
+
+    async def sweep():
+        """Remove pending orders that outlived pending_expiry_minutes."""
+        while True:
+            await asyncio.sleep(30)
+            async with lock:
+                try:
+                    report = await asyncio.to_thread(trader.expire_pending)
+                except Exception:
+                    log.exception("Expiry check failed")
+                    continue
+            if report:
+                await notify("\n".join(report))
+
+    sweeper = asyncio.create_task(sweep()) if cfg.trading.pending_expiry_minutes > 0 else None  # noqa: F841
 
     client.add_event_handler(handle, events.NewMessage())
     client.add_event_handler(handle, events.MessageEdited())  # groups that add SL/TP by editing
@@ -110,7 +131,11 @@ def main() -> None:
     ap.add_argument("--list-chats", action="store_true", help="print your chats and their ids")
     ap.add_argument("--parse", action="store_true", help="parse a message from stdin and exit")
     args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if not (args.parse or args.setup or args.list_chats):
+        handlers.append(logging.FileHandler("copier.log", encoding="utf-8"))   # history survives the window
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                        handlers=handlers)
     logging.getLogger("telethon").setLevel(logging.WARNING)
 
     if args.parse:

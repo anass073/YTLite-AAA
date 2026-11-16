@@ -5,5 +5,9 @@ if not exist config.yaml (
     pause
     exit /b 1
 )
+:loop
 .venv\Scripts\python -m copier
-pause
+echo.
+echo Bot stopped. Restarting in 15 seconds - close this window to stop it for good.
+timeout /t 15 /nobreak >nul
+goto loop

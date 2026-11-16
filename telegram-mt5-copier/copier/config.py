@@ -36,7 +36,7 @@ class TradingCfg:
     max_entry_drift: float = 0.5                # skip if price moved > this fraction of the SL distance
     deviation_points: int = 30                  # max slippage on market orders
     limit_if_away_from_entry: bool = True       # price not at the entry zone yet -> place a limit order there
-    pending_expiry_minutes: int = 0             # 0 = good till cancelled
+    pending_expiry_minutes: int = 120           # cancel unfilled limit/stop orders after this; 0 = never
     cancel_closes_positions: bool = False       # "cancel it" also closes already-open trades
     require_tp: bool = False
     magic: int = 770077

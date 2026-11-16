@@ -37,6 +37,28 @@ class Trader:
         return f"{acc.login} @ {acc.server}, balance {acc.balance:.2f} {acc.currency}"
 
     # ------------------------------------------------------------------ helpers
+    def _ensure_connected(self) -> None:
+        """Reconnect if the terminal was restarted; refuse to act without a broker connection."""
+        term = self.mt5.terminal_info()
+        if term is None:
+            log.warning("Lost the MT5 terminal - reconnecting")
+            self.connect()
+            term = self.mt5.terminal_info()
+        if term is not None and not term.connected:
+            raise Skip("MT5 terminal has no connection to the broker")
+
+    def _submit(self, req: dict):
+        """order_send, retrying with the other filling modes if the broker rejects ours."""
+        mt5 = self.mt5
+        res = mt5.order_send(req)
+        if res is not None and res.retcode == 10030 and "type_filling" in req:   # unsupported filling mode
+            for mode in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+                if mode != req["type_filling"]:
+                    res = mt5.order_send({**req, "type_filling": mode})
+                    if res is None or res.retcode != 10030:
+                        break
+        return res
+
     def _broker_symbol(self, symbol: str) -> str:
         return self.cfg.symbol_map.get(symbol, symbol) + self.cfg.symbol_suffix
 
@@ -71,6 +93,7 @@ class Trader:
         the signal ("set breakeven", "cancel it") can find its trades.
         """
         mt5, cfg = self.mt5, self.cfg
+        self._ensure_connected()
         if cfg.allowed_symbols and sig.symbol not in cfg.allowed_symbols:
             raise Skip(f"{sig.symbol} is not in allowed_symbols")
         if cfg.require_tp and not sig.tps:
@@ -130,8 +153,16 @@ class Trader:
             otype = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
             filling = self._filling(info)
 
+        # Let the broker expire unfilled orders if it supports that (works even when the
+        # bot is off); expire_pending() below covers brokers that do not.
+        broker_expiry = (pending and cfg.pending_expiry_minutes > 0
+                         and getattr(info, "expiration_mode", 0) & 4)
         report = []
         for tp in targets:
+            if not pending:                     # fresh price for every market order
+                now = mt5.symbol_info_tick(name)
+                if now is not None and now.ask and now.bid:
+                    price = now.ask if is_buy else now.bid
             req = {
                 "action": action, "symbol": name, "volume": volume, "type": otype,
                 "price": round(price, info.digits), "sl": round(sig.sl, info.digits),
@@ -139,7 +170,7 @@ class Trader:
                 "magic": cfg.magic, "comment": tag,
                 "type_time": mt5.ORDER_TIME_GTC, "type_filling": filling,
             }
-            if pending and cfg.pending_expiry_minutes > 0:
+            if broker_expiry:
                 req["type_time"] = mt5.ORDER_TIME_SPECIFIED
                 req["expiration"] = int(tick.time) + cfg.pending_expiry_minutes * 60
             kind = f"{sig.side.upper()} LIMIT/STOP" if pending else sig.side.upper()
@@ -152,7 +183,7 @@ class Trader:
                               f"broker would REJECT: {getattr(res, 'comment', mt5.last_error())}"))
                 continue
 
-            res = mt5.order_send(req)
+            res = self._submit(req)
             if res is not None and res.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED):
                 report.append(f"OK {desc} (ticket {res.order})")
             else:
@@ -169,7 +200,7 @@ class Trader:
     def _send(self, req: dict, desc: str) -> str:
         if self.cfg.dry_run:
             return f"[DRY RUN] would {desc}"
-        res = self.mt5.order_send(req)
+        res = self._submit(req)
         if res is not None and res.retcode in (self.mt5.TRADE_RETCODE_DONE, self.mt5.TRADE_RETCODE_PLACED):
             return f"OK {desc}"
         detail = f"{res.retcode} {res.comment}" if res is not None else str(self.mt5.last_error())
@@ -205,9 +236,32 @@ class Trader:
             out.append(self._send(req, f"close {p.volume} {p.symbol} #{p.ticket}"))
         return out or ["no open positions to close"]
 
+    def expire_pending(self) -> list[str]:
+        """Cancel the bot's pending orders older than pending_expiry_minutes."""
+        limit = self.cfg.pending_expiry_minutes * 60
+        if limit <= 0:
+            return []
+        out = []
+        for o in self._mine(self.mt5.orders_get(), None):
+            tick = self.mt5.symbol_info_tick(o.symbol)      # server time, same clock as time_setup
+            if tick is not None and tick.time - o.time_setup > limit:
+                req = {"action": self.mt5.TRADE_ACTION_REMOVE, "order": o.ticket}
+                out.append(self._send(req, f"cancel expired pending order on {o.symbol} #{o.ticket}"))
+        for line in out:
+            log.info(line)
+        return out
+
     def manage(self, command: str, tag: str | None = None) -> list[str]:
+        self._ensure_connected()
         if command == "breakeven":
             report = self.breakeven(tag)
+            # The channel is already in profit on this trade, so orders of ours that never
+            # filled would now be a late entry with the full stop: remove them. Without a
+            # reply we only do this when a single signal is active, to avoid guessing.
+            pending = self._mine(self.mt5.orders_get(), tag)
+            active = {i.comment for i in pending + self._mine(self.mt5.positions_get(), tag)}
+            if pending and len(active) == 1:
+                report += self.cancel_pending(tag)
         elif command == "close":
             report = self.cancel_pending(tag) + self.close_positions(tag)
         else:  # cancel

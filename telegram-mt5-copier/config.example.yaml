@@ -25,7 +25,7 @@ trading:
   deviation_points: 30           # max slippage for market orders
   limit_if_away_from_entry: true # price not at the entry zone yet -> place a limit order at the zone
   cancel_closes_positions: false # "cancel it" removes pending orders; true = also close open trades
-  pending_expiry_minutes: 0      # cancel unfilled limit/stop orders after N minutes (0 = never)
+  pending_expiry_minutes: 120    # cancel unfilled limit/stop orders after N minutes (0 = never)
   require_tp: false
   magic: 770077
   symbol_suffix: ""              # e.g. "m" or ".pro" if your broker shows XAUUSDm / XAUUSD.pro

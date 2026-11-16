@@ -30,6 +30,7 @@ class FakeMT5:
     def positions_get(self): return self.open
     def orders_get(self): return []
     def last_error(self): return (0, "")
+    def terminal_info(self): return NS(connected=True, trade_allowed=True)
     def order_calc_profit(self, otype, name, lots, price, sl):   # gold: 100 oz per lot
         return (sl - price if otype == self.ORDER_TYPE_BUY else price - sl) * 100 * lots
     def order_check(self, req): self.checked.append(req); return NS(retcode=0, comment="Done")
@@ -164,3 +165,62 @@ def test_management_respects_dry_run():
     m = FakeMT5(); m.open = [pos(1, "tg-42")]
     t, _ = make(m, dry_run=True)
     assert "DRY RUN" in t.manage("breakeven")[0] and m.sent == []
+
+
+# --- robustness ----------------------------------------------------------------
+def order(ticket, comment, age_s):
+    return NS(ticket=ticket, magic=770077, comment=comment, symbol="XAUUSD", time_setup=1_700_000_000 - age_s)
+
+
+def test_expired_pending_orders_are_cancelled():
+    m = FakeMT5()
+    m.orders_get = lambda: [order(1, "tg-1", 121 * 60), order(2, "tg-2", 5 * 60)]
+    t, _ = make(m, pending_expiry_minutes=120)
+    t.expire_pending()
+    assert m.sent == [{"action": 8, "order": 1}]
+    t2, m2 = make(pending_expiry_minutes=0)
+    assert t2.expire_pending() == []
+
+
+def test_breakeven_cancels_unfilled_orders_of_the_same_signal():
+    m = FakeMT5(); m.open = [pos(1, "tg-42")]
+    m.orders_get = lambda: [order(9, "tg-42", 60)]
+    t, _ = make(m)
+    t.manage("breakeven")
+    assert [r["action"] for r in m.sent] == [6, 8]
+
+
+def test_breakeven_without_reply_leaves_other_signals_orders_alone():
+    m = FakeMT5(); m.open = [pos(1, "tg-42")]
+    m.orders_get = lambda: [order(9, "tg-50", 60)]
+    t, _ = make(m)
+    t.manage("breakeven")
+    assert [r["action"] for r in m.sent] == [6]
+
+
+def test_retries_other_filling_mode_when_rejected():
+    m = FakeMT5()
+    def send(req):
+        m.sent.append(req)
+        return NS(retcode=10030 if req["type_filling"] == m.ORDER_FILLING_IOC else 10009, order=1, comment="")
+    m.order_send = send
+    t, _ = make(m, risk_mode="fixed")
+    assert t.execute(Signal("buy", "XAUUSD", 2640.0, [2660.0]))[0].startswith("OK")
+    assert [r["type_filling"] for r in m.sent] == [m.ORDER_FILLING_IOC, m.ORDER_FILLING_FOK]
+
+
+def test_reconnects_when_terminal_was_restarted():
+    m = FakeMT5(); calls = []
+    states = iter([None])
+    m.terminal_info = lambda: next(states, NS(connected=True, trade_allowed=True))
+    m.initialize = lambda **kw: calls.append(kw) or True
+    t, _ = make(m)
+    t.execute(Signal("buy", "XAUUSD", 2640.0, [2660.0]))
+    assert calls and m.sent
+
+
+def test_no_broker_connection_is_skipped():
+    m = FakeMT5(); m.terminal_info = lambda: NS(connected=False, trade_allowed=True)
+    t, _ = make(m)
+    with pytest.raises(Skip, match="no connection"):
+        t.execute(Signal("buy", "XAUUSD", 2640.0, [2660.0]))

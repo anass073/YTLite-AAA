@@ -74,12 +74,17 @@ status updates such as "TP1 hit", are ignored.
   the stop loss by more than `max_entry_drift` × the stop distance, it skips.
 - **Limit/stop signals** become pending orders at the posted entry.
 - **Follow-up messages** are acted on:
-  - `Set breakeven` / `Move SL to BE` → stop loss moved to the entry price
+  - `Set breakeven` / `Move SL to BE` → stop loss moved to the entry price, and that signal's
+    orders that never filled are removed
   - `Cancel it` → pending orders removed (open trades too if `cancel_closes_positions`)
   - `Close it` / `Close all` → pending orders removed and open trades closed
 
   If the message is a reply to a signal, only that signal's trades are touched;
   otherwise all trades opened by the bot. Trades you open by hand are never touched.
+- **Unfilled orders expire** after `pending_expiry_minutes` (default 120), so a limit
+  order the market never reached cannot fill hours later.
+- **Keeps itself running** – reconnects to MT5 if the terminal restarts, `run.bat`
+  restarts the bot if it stops, and everything is written to `copier.log`.
 - **Safety** – `max_open_trades`, `allowed_symbols`, a stop loss is always required,
   each message is traded once, and old messages are ignored.
 
