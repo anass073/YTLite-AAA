@@ -90,7 +90,8 @@ class Trader:
                        for d in deals if d.type in (0, 1))          # buy/sell deals, not deposits
         acc = self.mt5.account_info()
         start = acc.balance - realized
-        return (start - acc.equity) / start * 100 if start > 0 else 0.0
+        equity = acc.equity - getattr(acc, "credit", 0.0)          # broker credit is not your money
+        return (start - equity) / start * 100 if start > 0 else 0.0
 
     def _filling(self, info) -> int:
         if info.filling_mode & 1:

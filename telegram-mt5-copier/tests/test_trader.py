@@ -371,3 +371,10 @@ def test_implausible_signal_levels_are_refused():
     with pytest.raises(Skip, match="implausibly far"):
         t.execute(Signal("buy", "XAUUSD", 3882.0, [3894.0, 4902.0]))
     assert m.sent == []
+
+
+def test_daily_loss_ignores_broker_credit():
+    m = FakeMT5(balance=200.0)
+    m.account_info = lambda: NS(balance=200.0, equity=207.90, credit=47.90, login=1, server="x", currency="EUR")
+    t, _ = make(m)                                 # equity 207.90 includes 47.90 credit -> really down 40 of 200
+    assert round(t.daily_loss_percent(), 6) == 20.0
