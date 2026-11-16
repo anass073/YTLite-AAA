@@ -82,13 +82,48 @@ def test_channel_format():
     assert (single.entry_low, single.entry_high) == (2650.0, 2650.0)
 
 
+def cmds(text):
+    from copier.parser import parse_commands
+    assert parse_signal(text)[0] is None
+    return [str(c) for c in parse_commands(text)]
+
+
 @pytest.mark.parametrize("text,expected", [
-    ("Set breakeven", "breakeven"), ("Set breakeven now", "breakeven"), ("Move SL to BE", "breakeven"),
-    ("Cancel it", "cancel"), ("Close it now", "close"), ("Close all trades", "close"),
-    ("BE hit", None), ("TP1 HIT + 50 PIPS ✅", None), ("in", None), ("Sell Gold now", None),
-    ("Ready for this new week ?", None), ("Market closed for today", None),
+    # breakeven, including the channel's typos
+    ("Set breakeven", ["breakeven"]), ("Set breakeven now", ["breakeven"]), ("Move SL to BE", ["breakeven"]),
+    ("Srt breakenven now", ["breakeven"]), ("Ok set breakeven now if you are in", ["breakeven"]),
+    ("Srt breakenven and take Tp1 at 3901", ["breakeven", "take TP1 at 3901.0"]),
+    # targets and trailing stops
+    ("Take tp1 now", ["take TP1 now"]), ("Take tp1 nox", ["take TP1 now"]),
+    ("Take TP1 at 3868", ["take TP1 at 3868.0"]), ("Take tp1 a 3885", ["take TP1 at 3885.0"]),
+    ("Take TP2 at 3947", ["take TP2 at 3947.0"]), ("Take TP3 at 4902", ["take TP3 at 4902.0"]),
+    ("120 pips running, Move SL at 3950 (+50 pips)", ["move SL to 3950.0"]),
+    ("Move sl at 3894", ["move SL to 3894.0"]),
+    ("110 pips running, Move SL at 3886 for last entry", ["move SL to 3886.0"]),
+    ("More 160 pips , Move SL at 3890", ["move SL to 3890.0"]),
+    # enter now
+    ("Sell Gold now", ["enter now (sell)"]), ("Buy gold now", ["enter now (buy)"]),
+    ("Buy Now", ["enter now (buy)"]), ("Activ buy now", ["enter now (buy)"]),
+    ("Cancel", ["cancel"]), ("Cancel it", ["cancel"]), ("Close it now", ["close"]), ("Close all trades", ["close"]),
+    # reports and chatter must do nothing
+    ("BE hit", []), ("Breakeven hit", []), ("TP1 HIT + 50 PIPS ✅", []), ("SL HIT 😢", []), ("in", []), ("In", []),
+    ("Sorry , not TP1 , BE hit before 😢", []), ("I Didn’t  move it myself", []),
+    ("Be hit , not the time to annonce to take tp1 at 3887", []),
+    ("Buu gold 3890", []), ("3890.3", []), ("I m not in for 1 pips !!!", []), ("Are you in ? yes 👍", []),
+    ("Close entry 69 and keep 71 and 72", []), ("only keep entry 87/88", []),
+    ("Ready for this new week ?", []), ("Market closed for today", []), ("Hello Traders, Have a good day", []),
+    ("I hope you’ve understood how I operate and that you’ve taken it on board ::))", []),
 ])
 def test_commands(text, expected):
-    from copier.parser import parse_command
-    assert parse_command(text) == expected
-    assert parse_signal(text)[0] is None
+    assert cmds(text) == expected
+
+
+def test_recaps_are_not_signals():
+    recap = ("DAILY RECAP : +320 PIPS 🚀\n\n• 1. Sell $XAUUSD + 40 PIPS ✅\n• 1. Buy $XAUUSD +90 PIPS ✅\n"
+             "• 3. Sell $XAUUSD - 80 PIPS \n\n1 SL, 1 breakeven hits. 🔥 Let’s keep it going tomorrow. 🚀")
+    assert cmds(recap) == []
+
+
+def test_buy_zone_written_high_to_low():
+    s = ok("1. Buy XAUUSD 3890-3887⚡️\n\nSL : 3882\n\nTP1 : 3894\nTP2 : 3898\nTP3 : 3930")
+    assert (s.side, s.entry_low, s.entry_high, s.sl, s.tps) == ("buy", 3887.0, 3890.0, 3882.0, [3894.0, 3898.0, 3930.0])

@@ -23,6 +23,7 @@ trading:
   max_open_trades: 5             # bot stops opening trades above this
   max_daily_loss_percent: 20.0   # no new trades once the account is down this much today (0 = off)
   max_entry_drift: 0.5           # skip if price already ran towards the SL by more than this fraction of the SL distance
+  activate_max_distance: 0.25    # "Buy now" turns a waiting limit order into a market order if price is this close
   market_entry_tolerance: 0.15   # enter at market if price is this close to the entry zone (fraction of the SL distance)
   deviation_points: 30           # max slippage for market orders
   limit_if_away_from_entry: true # price not at the entry zone yet -> limit order at the edge of the zone

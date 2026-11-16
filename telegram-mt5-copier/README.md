@@ -74,14 +74,23 @@ status updates such as "TP1 hit", are ignored.
   so it fills whenever the channel's own entry does. If price has already run towards
   the stop loss by more than `max_entry_drift` × the stop distance, it skips.
 - **Limit/stop signals** become pending orders at the posted entry.
-- **Follow-up messages** are acted on:
-  - `Set breakeven` / `Move SL to BE` → stop loss moved to the entry price, and that signal's
-    orders that never filled are removed
-  - `Cancel it` → pending orders removed (open trades too if `cancel_closes_positions`)
-  - `Close it` / `Close all` → pending orders removed and open trades closed
+- **Follow-up messages** are acted on (spelling mistakes like "Srt breakenven" included):
+
+  | Message | What the bot does |
+  |---|---|
+  | `Set breakeven now` / `Move SL to BE` | Stop loss moved to the entry price. If price has not passed the entry yet, it is queued and applied the moment it has. That signal's orders that never filled are removed. |
+  | `Move SL at 3950` | Stop moved to that price on the open positions. Only ever tightens a stop. |
+  | `Take TP1 now` | Closes the TP1 position at market. |
+  | `Take TP2 at 3947` | Moves that position's target; closes it if price is already there. |
+  | `Buy now` / `Sell gold now` / `Activ buy now` | If the bot is still waiting with limit orders, and price is within `activate_max_distance` of them, they become market orders. Otherwise nothing happens. |
+  | `Cancel` / `Cancel it` | Pending orders removed (open trades too if `cancel_closes_positions`). |
+  | `Close it` / `Close all` | Pending orders removed and open trades closed. |
 
   If the message is a reply to a signal, only that signal's trades are touched;
   otherwise all trades opened by the bot. Trades you open by hand are never touched.
+  A price that is more than 5% away from the market ("Take TP3 at 4902") is treated as
+  a typo and ignored. Reports such as "TP1 hit", "BE hit" or "in" do nothing, and
+  entry-specific instructions ("Close entry 69 and keep 71") are not understood.
 - **Edited signals** – if the channel edits the SL or TPs of a signal the bot traded,
   its positions and pending orders are moved to the new levels (a stop already at
   breakeven is left alone). Only works for signals traded since the bot last started.
@@ -94,8 +103,6 @@ status updates such as "TP1 hit", are ignored.
   restarts the bot if it stops, and everything is written to `copier.log`.
 - **Safety** – `max_open_trades`, `allowed_symbols`, a stop loss is always required,
   each message is traded once, and old messages are ignored.
-
-Status messages such as "TP1 hit", "BE hit" or "in" are ignored.
 
 ## Tests
 

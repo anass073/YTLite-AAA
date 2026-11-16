@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timezone
 
 from . import config as config_mod
-from .parser import parse_command, parse_signal
+from .parser import parse_commands, parse_signal
 
 log = logging.getLogger("copier")
 
@@ -103,34 +103,39 @@ async def run(cfg, args) -> None:
             log.info("Ignored message %s: %.0f seconds old", event.id, age)
             return
         sig, why = parse_signal(event.raw_text)
-        command = None if sig else parse_command(event.raw_text)
-        if sig is None and command is None:
+        commands = [] if sig else parse_commands(event.raw_text)
+        if sig is None and not commands:
             log.info("Ignored message %s: %s", event.id, why)
             return
         done.add(key)
         if sig:
             traded[key] = sig
             await run_job(str(sig), lambda: trader.execute(sig, tag=f"tg-{event.id}"))
-        else:
-            # A reply to a signal only affects that signal's trades; otherwise all of the bot's trades.
-            replied = getattr(event.message, "reply_to_msg_id", None)
-            await run_job(f"Instruction: {command}" + (" (for the replied-to signal)" if replied else ""),
-                          lambda: trader.manage(command, f"tg-{replied}" if replied else None))
+            return
+        # A reply to a signal only affects that signal's trades; otherwise all of the bot's trades.
+        replied = getattr(event.message, "reply_to_msg_id", None)
+        tag = f"tg-{replied}" if replied else None
+
+        def job():
+            return [line for c in commands for line in trader.manage(c, tag)]
+
+        title = "Instruction: " + " + ".join(map(str, commands))
+        await run_job(title + (" (for the replied-to signal)" if replied else ""), job, quiet_if_empty=True)
 
     async def sweep():
-        """Remove pending orders that outlived pending_expiry_minutes."""
+        """Every few seconds: apply queued breakevens, remove expired pending orders."""
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(5)
             async with lock:
                 try:
-                    report = await asyncio.to_thread(trader.expire_pending)
+                    report = await asyncio.to_thread(trader.housekeeping)
                 except Exception:
-                    log.exception("Expiry check failed")
+                    log.exception("Housekeeping failed")
                     continue
             if report:
                 await notify("\n".join(report))
 
-    sweeper = asyncio.create_task(sweep()) if cfg.trading.pending_expiry_minutes > 0 else None  # noqa: F841
+    sweeper = asyncio.create_task(sweep())  # noqa: F841  (keep a reference so it is not garbage collected)
 
     client.add_event_handler(handle, events.NewMessage())
     client.add_event_handler(handle, events.MessageEdited())  # groups that add SL/TP by editing

@@ -141,23 +141,55 @@ def parse_signal(text: str) -> tuple[Signal | None, str]:
     return Signal(side, symbol, sl, tps, entry, pending, low, high), ""
 
 
+# ----------------------------------------------------------------- follow-up instructions
+HIT_RE = re.compile(r"\bhits?\b", re.I)                 # "TP1 HIT", "BE hit": reports, not instructions
 BREAKEVEN_RE = re.compile(
-    r"\b(?:set|move|put|secure)\b.{0,25}\b(?:be|b/e|break\s*-?\s*even)\b"
-    r"|\bbreak\s*-?\s*even\s+now\b|\bsl\s+(?:to\s+)?(?:be|entry|break\s*-?\s*even)\b", re.I)
+    r"\bbreak\s*-?\s*e\w{1,5}n\b"                       # breakeven, break even, "breakenven"
+    r"|\b(?:set|move|put|sl)\b(?:\s+(?:the|your|sl|stop|to|at|on)){0,3}\s+b/?e\b"   # "move SL to BE"
+    r"|\bsl\s+(?:to|at)\s+entry\b", re.I)
+MOVE_SL_RE = re.compile(
+    rf"\bmove\s+(?:the\s+|your\s+)?(?:sl|stop(?:\s*loss)?)\s*(?:at|to|a|@|=|:)?\s*({NUM})", re.I)
+TAKE_TP_RE = re.compile(rf"\btake\s+(?:the\s+)?tp\s*(\d)\b(?:\s*(?:at|to|a|@|=|:)?\s*({NUM})\b)?", re.I)
+ENTER_NOW_RE = re.compile(r"\b(buy|sell)\s+(?:[\w/]+\s+)?now\b|\bactiv\w*\s+(buy|sell)\b", re.I)
 CANCEL_RE = re.compile(r"^\W*cancel\b|\bcancel\s+(?:it|this|the|that|order|trade|signal)\b", re.I)
 CLOSE_RE = re.compile(
     r"\bclose\s+(?:it|all|now|this|everything|early|manually|(?:the\s+|your\s+)?(?:trade|position|order)s?)\b", re.I)
 
 
-def parse_command(text: str) -> str | None:
-    """Recognise short follow-up instructions: "breakeven", "cancel" or "close"."""
+@dataclass
+class Command:
+    name: str                      # breakeven | cancel | close | move_sl | take_tp | activate
+    price: float | None = None     # move_sl: new stop; take_tp: new target (None = take it now)
+    n: int | None = None           # take_tp: which take profit
+    side: str | None = None        # activate: "buy" | "sell"
+
+    def __str__(self) -> str:
+        if self.name == "move_sl":
+            return f"move SL to {self.price}"
+        if self.name == "take_tp":
+            return f"take TP{self.n} " + (f"at {self.price}" if self.price else "now")
+        if self.name == "activate":
+            return f"enter now ({self.side})"
+        return self.name
+
+
+def parse_commands(text: str) -> list[Command]:
+    """Recognise short follow-up instructions such as "Set breakeven now",
+    "Move SL at 3950", "Take TP1 at 3868", "Take tp1 now", "Buy now", "Cancel it"."""
     text = _normalise(text or "").strip()
-    if not text or len(text) > 80:      # long messages are commentary, not instructions
-        return None
-    if BREAKEVEN_RE.search(text):
-        return "breakeven"
+    if not text or len(text) > 100 or HIT_RE.search(text):   # long = commentary, "hit" = a report
+        return []
     if CANCEL_RE.search(text):
-        return "cancel"
+        return [Command("cancel")]
     if CLOSE_RE.search(text):
-        return "close"
-    return None
+        return [Command("close")]
+    out = []
+    if m := MOVE_SL_RE.search(text):
+        out.append(Command("move_sl", price=float(m.group(1))))
+    elif BREAKEVEN_RE.search(text):
+        out.append(Command("breakeven"))
+    for m in TAKE_TP_RE.finditer(text):
+        out.append(Command("take_tp", price=float(m.group(2)) if m.group(2) else None, n=int(m.group(1))))
+    if not out and (m := ENTER_NOW_RE.search(text)):
+        out.append(Command("activate", side=(m.group(1) or m.group(2)).lower()))
+    return out

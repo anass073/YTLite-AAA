@@ -123,7 +123,7 @@ def test_zone_market_when_price_is_in_zone():
     t.execute(Signal(**ZONE), tag="tg-42")
     assert [(r["action"], r["type"], r["price"], r["tp"]) for r in m.sent] == [
         (1, 1, 3856.0, 3850.0), (1, 1, 3856.0, 3845.0), (1, 1, 3856.0, 3810.0)]
-    assert {r["comment"] for r in m.sent} == {"tg-42"}
+    assert [r["comment"] for r in m.sent] == ["tg-42-1", "tg-42-2", "tg-42-3"]
 
 
 def test_zone_limit_when_price_has_not_reached_it():
@@ -276,3 +276,90 @@ def test_edited_signal_updates_levels_but_keeps_breakeven():
         {"action": 7, "order": 9, "price": 3855.0, "sl": 3865.0, "tp": 3845.0, "type_time": 0, "expiration": 0},
     ]
     assert t.update_levels("tg-nothing", old, new) == []
+
+
+# --- the channel's follow-up instructions -------------------------------------------
+from copier.parser import Command
+
+
+def buys(m, sl=3882.0):
+    """Three open buy positions from signal 77, entry 3890, TP1-3."""
+    m.open = [NS(ticket=i, magic=770077, comment=f"tg-77-{i}", symbol="XAUUSD", sl=sl, tp=tp,
+                 price_open=3890.0, volume=0.01, type=0) for i, tp in ((1, 3894.0), (2, 3898.0), (3, 3930.0))]
+    return m
+
+
+def test_take_tp_now_closes_only_that_position():
+    m = buys(FakeMT5(bid=3893.0, ask=3893.2)); t, _ = make(m)
+    t.manage(Command("take_tp", n=1))
+    assert [(r["action"], r["position"], r["type"], r["price"]) for r in m.sent] == [(1, 1, 1, 3893.0)]
+
+
+def test_take_tp_at_price_moves_the_target():
+    m = buys(FakeMT5(bid=3891.0, ask=3891.2)); t, _ = make(m)
+    t.manage(Command("take_tp", price=3893.0, n=1))
+    assert m.sent == [{"action": 6, "position": 1, "symbol": "XAUUSD", "sl": 3882.0, "tp": 3893.0}]
+    m.sent.clear()
+    t.manage(Command("take_tp", price=3890.5, n=2))          # price is already above it: close now
+    assert [(r["action"], r["position"]) for r in m.sent] == [(1, 2)]
+
+
+def test_take_tp_typo_is_ignored():
+    m = buys(FakeMT5(bid=3891.0, ask=3891.2)); t, _ = make(m)
+    assert "not a plausible" in t.manage(Command("take_tp", price=4902.0, n=3))[0] and m.sent == []
+
+
+def test_move_sl_only_tightens():
+    m = buys(FakeMT5(bid=3899.0, ask=3899.2)); t, _ = make(m)
+    t.manage(Command("move_sl", price=3894.0))
+    assert [(r["position"], r["sl"]) for r in m.sent] == [(1, 3894.0), (2, 3894.0), (3, 3894.0)]
+    m.sent.clear()
+    for p in m.open: p.sl = 3894.0
+    t.manage(Command("move_sl", price=3886.0))                # would loosen: nothing sent
+    t.manage(Command("breakeven"))                            # stop already beyond entry: nothing sent
+    t.manage(Command("move_sl", price=389.0))                 # typo
+    assert m.sent == []
+
+
+def test_breakeven_is_queued_until_price_passes_entry():
+    m = buys(FakeMT5(bid=3889.5, ask=3889.7)); t, _ = make(m)
+    assert all("queued" in line for line in t.manage(Command("breakeven"))) and m.sent == []
+    assert t.housekeeping() == [] and m.sent == []
+    m.bid, m.ask = 3890.4, 3890.6
+    assert len(t.housekeeping()) == 3
+    assert [(r["action"], r["sl"]) for r in m.sent] == [(6, 3890.0)] * 3
+    m.sent.clear()
+    assert t.housekeeping() == [] and m.sent == []            # done, not repeated
+
+
+def limit(ticket, comment, type=2, price=3890.0, sl=3882.0, tp=3894.0):
+    return NS(ticket=ticket, magic=770077, comment=comment, symbol="XAUUSD", type=type, price_open=price,
+              sl=sl, tp=tp, volume_current=0.01, time_setup=1_700_000_000, type_time=0, time_expiration=0)
+
+
+def test_buy_now_turns_waiting_limits_into_market_orders():
+    m = FakeMT5(bid=3890.1, ask=3890.3)                       # the channel's "Activ buy now 3890.3"
+    m.orders_get = lambda: [limit(1, "tg-77-1"), limit(2, "tg-77-2", tp=3898.0), limit(3, "tg-60-1", type=3)]
+    t, _ = make(m)
+    t.manage(Command("activate", side="buy"))
+    assert [(r["action"], r.get("order"), r.get("price"), r.get("tp"), r.get("comment")) for r in m.sent] == [
+        (8, 1, None, None, None), (1, None, 3890.3, 3894.0, "tg-77-1"),
+        (8, 2, None, None, None), (1, None, 3890.3, 3898.0, "tg-77-2")]
+
+
+def test_buy_now_leaves_orders_alone_when_price_is_far_or_nothing_waits():
+    m = FakeMT5(bid=3892.9, ask=3893.1)                       # 3.1 above a limit with an 8 point stop
+    m.orders_get = lambda: [limit(1, "tg-77-1")]
+    t, _ = make(m)
+    assert "left pending" in t.manage(Command("activate", side="buy"))[0] and m.sent == []
+    t2, m2 = make()
+    assert t2.manage(Command("activate", side="sell")) == []  # a pre-alert with nothing waiting: silent
+
+
+def test_implausible_signal_levels_are_refused():
+    t, m = make(FakeMT5(bid=3890.0, ask=3890.2), risk_mode="fixed")
+    with pytest.raises(Skip, match="implausibly far"):
+        t.execute(Signal("buy", "XAUUSD", 2.0, [3894.0]))     # e.g. a recap misread as "SL 2"
+    with pytest.raises(Skip, match="implausibly far"):
+        t.execute(Signal("buy", "XAUUSD", 3882.0, [3894.0, 4902.0]))
+    assert m.sent == []
