@@ -2,6 +2,7 @@
 
     python -m copier --setup          guided first-time setup, writes config.yaml
     python -m copier --list-chats    find the id of your signal group
+    python -m copier --report         what the bot's trades made so far (add --days 7)
     python -m copier --parse          paste a message, see how it would be read
     python -m copier                  run
 """
@@ -154,11 +155,13 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-c", "--config", default="config.yaml")
     ap.add_argument("--setup", action="store_true", help="interactive first-time setup")
+    ap.add_argument("--report", action="store_true", help="show what the bot's trades made, from MT5 history")
+    ap.add_argument("--days", type=int, default=30, help="period for --report (default 30)")
     ap.add_argument("--list-chats", action="store_true", help="print your chats and their ids")
     ap.add_argument("--parse", action="store_true", help="parse a message from stdin and exit")
     args = ap.parse_args()
     handlers: list[logging.Handler] = [logging.StreamHandler()]
-    if not (args.parse or args.setup or args.list_chats):
+    if not (args.parse or args.setup or args.list_chats or args.report):
         handlers.append(logging.FileHandler("copier.log", encoding="utf-8"))   # history survives the window
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
                         handlers=handlers)
@@ -169,6 +172,10 @@ def main() -> None:
         print(sig if sig else f"Not a signal: {why}")
         return
     try:
+        if args.report:
+            from .report import run as report
+            print(report(config_mod.load(args.config), args.days))
+            return
         if args.setup:
             from .setup import wizard
             asyncio.run(wizard(args.config))

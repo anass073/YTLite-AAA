@@ -104,6 +104,13 @@ status updates such as "TP1 hit", are ignored.
 - **Safety** – `max_open_trades`, `allowed_symbols`, a stop loss is always required,
   each message is traded once, and old messages are ignored.
 
+## Results report
+
+Double-click **`report.bat`** (or run `python -m copier --report --days 30`) to see what
+the bot's trades actually made, read from your MT5 account history: result per signal,
+won / lost / breakeven counts, the total after spread and commission, limit orders that
+never filled, and signals that were skipped and why. MT5 must be open.
+
 ## Tests
 
 ```bash
