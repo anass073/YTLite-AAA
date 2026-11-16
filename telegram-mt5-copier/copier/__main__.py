@@ -1,0 +1,116 @@
+"""Telegram signal -> MetaTrader 5 copier.
+
+    python -m copier --list-chats     find the id of your signal group
+    python -m copier --parse          paste a message, see how it would be read
+    python -m copier                  run
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import sys
+from datetime import datetime, timezone
+
+from . import config as config_mod
+from .parser import parse_signal
+
+log = logging.getLogger("copier")
+
+
+async def resolve_chats(client, wanted: list) -> set[int]:
+    wanted_norm = {str(w).strip().lstrip("@").lower() for w in wanted}
+    found, ids = set(), set()
+    async for d in client.iter_dialogs():
+        keys = {str(d.id), (d.name or "").lower(), (getattr(d.entity, "username", None) or "").lower()}
+        hit = (keys & wanted_norm) - {""}
+        if hit:
+            ids.add(d.id)
+            found |= hit
+            log.info("Watching: %s (%s)", d.name, d.id)
+    if missing := wanted_norm - found:
+        raise SystemExit(f"Chats not found in your account: {sorted(missing)} - run --list-chats")
+    return ids
+
+
+async def run(cfg, args) -> None:
+    from telethon import TelegramClient, events
+
+    client = TelegramClient(cfg.telegram.session, cfg.telegram.api_id, cfg.telegram.api_hash)
+    await client.start()  # asks for phone + login code on the first run only
+
+    if args.list_chats:
+        async for d in client.iter_dialogs():
+            print(f"{d.id:>16}  {d.name}")
+        return
+
+    if not cfg.telegram.chats:
+        raise SystemExit("Set telegram.chats in config.yaml (run --list-chats to find the id)")
+    chat_ids = await resolve_chats(client, cfg.telegram.chats)
+
+    from .trader import Skip, Trader
+    trader = Trader(cfg.trading, cfg.mt5)
+    log.info("MT5 connected: %s", trader.connect())
+    log.info("Mode: %s", "DRY RUN - no orders will be sent" if cfg.trading.dry_run else "LIVE TRADING")
+
+    done: set[tuple[int, int]] = set()
+    lock = asyncio.Lock()
+
+    async def handle(event):
+        if event.chat_id not in chat_ids:
+            return
+        key = (event.chat_id, event.id)
+        if key in done:
+            return
+        age = (datetime.now(timezone.utc) - event.date).total_seconds()
+        if age > cfg.telegram.max_signal_age_seconds:
+            return  # e.g. an old signal edited to add "TP1 hit"
+        sig, why = parse_signal(event.raw_text)
+        if sig is None:
+            log.info("Ignored message %s: %s", event.id, why)
+            return
+        done.add(key)
+        log.info("Signal: %s", sig)
+        async with lock:
+            try:
+                report = await asyncio.to_thread(trader.execute, sig)
+            except Skip as e:
+                report = [f"SKIPPED: {e}"]
+                log.warning(report[0])
+            except Exception as e:  # keep listening whatever happens
+                report = [f"ERROR: {e!r}"]
+                log.exception("Execution failed")
+        if cfg.telegram.notify:
+            try:
+                await client.send_message("me", f"{sig}\n" + "\n".join(report))
+            except Exception:
+                log.exception("Could not send notification")
+
+    client.add_event_handler(handle, events.NewMessage())
+    client.add_event_handler(handle, events.MessageEdited())  # groups that add SL/TP by editing
+    log.info("Listening for signals... Ctrl+C to stop")
+    await client.run_until_disconnected()
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="copier", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("-c", "--config", default="config.yaml")
+    ap.add_argument("--list-chats", action="store_true", help="print your chats and their ids")
+    ap.add_argument("--parse", action="store_true", help="parse a message from stdin and exit")
+    args = ap.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger("telethon").setLevel(logging.WARNING)
+
+    if args.parse:
+        sig, why = parse_signal(sys.stdin.read())
+        print(sig if sig else f"Not a signal: {why}")
+        return
+    try:
+        asyncio.run(run(config_mod.load(args.config), args))
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

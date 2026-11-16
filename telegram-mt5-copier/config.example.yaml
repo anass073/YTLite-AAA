@@ -1,0 +1,31 @@
+# Copy to config.yaml and fill in. config.yaml is git-ignored - never share it.
+
+telegram:
+  api_id: 123456                 # from https://my.telegram.org -> API development tools
+  api_hash: "your_api_hash"
+  chats: [-1001234567890]        # signal group id (run: python -m copier --list-chats), @username or exact title
+  notify: true                   # send every result to your own Saved Messages
+  max_signal_age_seconds: 120    # ignore anything older than this
+
+mt5:
+  login: 12345678                # leave 0 to use whatever account the terminal is already logged into
+  password: ""
+  server: "YourBroker-Demo"
+  path: ""                       # full path to terminal64.exe, only if auto-detection fails
+
+trading:
+  dry_run: true                  # true = ask the broker to validate each order but never send it
+  risk_mode: percent             # percent | fixed
+  risk_percent: 1.0              # % of balance lost if the stop loss is hit (for the whole signal)
+  fixed_lot: 0.01                # total lots per signal when risk_mode is "fixed"
+  max_lot: 1.0                   # hard cap on total lots per signal
+  max_tps: 3                     # one position per take profit, at most this many
+  max_open_trades: 5             # bot stops opening trades above this
+  max_entry_drift: 0.5           # skip if price already moved more than this fraction of the SL distance
+  deviation_points: 30           # max slippage for market orders
+  pending_expiry_minutes: 0      # cancel unfilled limit/stop orders after N minutes (0 = never)
+  require_tp: false
+  magic: 770077
+  symbol_suffix: ""              # e.g. "m" or ".pro" if your broker shows XAUUSDm / XAUUSD.pro
+  symbol_map: {}                 # e.g. {XAUUSD: GOLD, NAS100: USTEC}
+  allowed_symbols: []            # e.g. [XAUUSD, EURUSD]; empty = trade everything
