@@ -11,7 +11,16 @@ MetaTrader 5 the moment a signal is posted (typically well under a second).
 - Python 3.10+
 - In MT5: enable the **Algo Trading** button in the toolbar.
 
-## Setup
+## Quick setup (Windows)
+
+1. Install [Python](https://www.python.org/downloads/) (tick *Add python.exe to PATH*).
+2. Open MT5 and log into the account you want to trade (demo recommended).
+3. Double-click **`setup.bat`**. It installs everything, then asks for your Telegram
+   API keys, logs you into Telegram, lets you pick the signal group from a list,
+   checks the MT5 connection and writes `config.yaml`.
+4. Double-click **`run.bat`** to start the bot.
+
+## Manual setup
 
 ```bash
 pip install -r requirements.txt

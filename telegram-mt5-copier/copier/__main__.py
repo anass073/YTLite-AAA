@@ -1,6 +1,7 @@
 """Telegram signal -> MetaTrader 5 copier.
 
-    python -m copier --list-chats     find the id of your signal group
+    python -m copier --setup          guided first-time setup, writes config.yaml
+    python -m copier --list-chats    find the id of your signal group
     python -m copier --parse          paste a message, see how it would be read
     python -m copier                  run
 """
@@ -96,6 +97,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="copier", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-c", "--config", default="config.yaml")
+    ap.add_argument("--setup", action="store_true", help="interactive first-time setup")
     ap.add_argument("--list-chats", action="store_true", help="print your chats and their ids")
     ap.add_argument("--parse", action="store_true", help="parse a message from stdin and exit")
     args = ap.parse_args()
@@ -107,6 +109,10 @@ def main() -> None:
         print(sig if sig else f"Not a signal: {why}")
         return
     try:
+        if args.setup:
+            from .setup import wizard
+            asyncio.run(wizard(args.config))
+            return
         asyncio.run(run(config_mod.load(args.config), args))
     except KeyboardInterrupt:
         pass

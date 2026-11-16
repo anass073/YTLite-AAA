@@ -97,3 +97,11 @@ def test_max_open_trades():
     t, _ = make(m)
     with pytest.raises(Skip, match="max_open_trades"):
         t.execute(Signal("buy", "XAUUSD", 2640.0, [2660.0]))
+
+
+def test_detect_suffix():
+    from copier.setup import detect_suffix
+    assert detect_suffix(["EURUSD", "EURUSDm"]) == ""
+    assert detect_suffix(["EURUSD.pro", "XAUUSD.pro"]) == ".pro"
+    assert detect_suffix(["XAUUSDm", "US30m"]) == "m"
+    assert detect_suffix([]) == ""
