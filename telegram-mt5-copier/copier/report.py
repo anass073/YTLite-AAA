@@ -115,7 +115,7 @@ def build_report(deals, orders, positions, balance: float, currency: str, magic:
     if start < -0.005:      # the history does not add up (e.g. entries the broker books differently)
         out.append(f"Balance now:         {balance:.2f} {currency}")
     else:
-        out.append(f"Balance:             {start:.2f} -> {balance:.2f} {currency}")
+        out.append(f"Balance:             {max(start, 0.0):.2f} -> {balance:.2f} {currency}")
     return "\n".join(out)
 
 
