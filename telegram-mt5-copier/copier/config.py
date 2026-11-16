@@ -35,7 +35,9 @@ class TradingCfg:
     max_open_trades: int = 5                    # positions + pending orders opened by this bot
     max_entry_drift: float = 0.5                # skip if price moved > this fraction of the SL distance
     deviation_points: int = 30                  # max slippage on market orders
+    limit_if_away_from_entry: bool = True       # price not at the entry zone yet -> place a limit order there
     pending_expiry_minutes: int = 0             # 0 = good till cancelled
+    cancel_closes_positions: bool = False       # "cancel it" also closes already-open trades
     require_tp: bool = False
     magic: int = 770077
     symbol_suffix: str = ""                     # e.g. ".m" or "m" if your broker adds one

@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timezone
 
 from . import config as config_mod
-from .parser import parse_signal
+from .parser import parse_command, parse_signal
 
 log = logging.getLogger("copier")
 
@@ -67,14 +67,23 @@ async def run(cfg, args) -> None:
         if age > cfg.telegram.max_signal_age_seconds:
             return  # e.g. an old signal edited to add "TP1 hit"
         sig, why = parse_signal(event.raw_text)
-        if sig is None:
+        command = None if sig else parse_command(event.raw_text)
+        if sig is None and command is None:
             log.info("Ignored message %s: %s", event.id, why)
             return
         done.add(key)
-        log.info("Signal: %s", sig)
+        if sig:
+            title = str(sig)
+            job = lambda: trader.execute(sig, tag=f"tg-{event.id}")
+        else:
+            # A reply to a signal only affects that signal's trades; otherwise all of the bot's trades.
+            replied = getattr(event.message, "reply_to_msg_id", None)
+            title = f"Instruction: {command}" + (" (for the replied-to signal)" if replied else "")
+            job = lambda: trader.manage(command, f"tg-{replied}" if replied else None)
+        log.info(title)
         async with lock:
             try:
-                report = await asyncio.to_thread(trader.execute, sig)
+                report = await asyncio.to_thread(job)
             except Skip as e:
                 report = [f"SKIPPED: {e}"]
                 log.warning(report[0])
@@ -83,7 +92,7 @@ async def run(cfg, args) -> None:
                 log.exception("Execution failed")
         if cfg.telegram.notify:
             try:
-                await client.send_message("me", f"{sig}\n" + "\n".join(report))
+                await client.send_message("me", f"{title}\n" + "\n".join(report))
             except Exception:
                 log.exception("Could not send notification")
 

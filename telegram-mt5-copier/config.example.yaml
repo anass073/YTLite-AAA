@@ -23,6 +23,8 @@ trading:
   max_open_trades: 5             # bot stops opening trades above this
   max_entry_drift: 0.5           # skip if price already moved more than this fraction of the SL distance
   deviation_points: 30           # max slippage for market orders
+  limit_if_away_from_entry: true # price not at the entry zone yet -> place a limit order at the zone
+  cancel_closes_positions: false # "cancel it" removes pending orders; true = also close open trades
   pending_expiry_minutes: 0      # cancel unfilled limit/stop orders after N minutes (0 = never)
   require_tp: false
   magic: 770077

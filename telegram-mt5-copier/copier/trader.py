@@ -64,8 +64,12 @@ class Trader:
         return self.mt5.ORDER_FILLING_RETURN
 
     # ------------------------------------------------------------------ execute
-    def execute(self, sig: Signal) -> list[str]:
-        """Place the orders for one signal. Returns report lines; raises Skip."""
+    def execute(self, sig: Signal, tag: str = "tg-copier") -> list[str]:
+        """Place the orders for one signal. Returns report lines; raises Skip.
+
+        `tag` is stored as the order comment so follow-up messages that reply to
+        the signal ("set breakeven", "cancel it") can find its trades.
+        """
         mt5, cfg = self.mt5, self.cfg
         if cfg.allowed_symbols and sig.symbol not in cfg.allowed_symbols:
             raise Skip(f"{sig.symbol} is not in allowed_symbols")
@@ -87,14 +91,20 @@ class Trader:
 
         is_buy = sig.side == "buy"
         market = tick.ask if is_buy else tick.bid
-        price = sig.entry if sig.pending else market
+        pending = sig.pending
+        if not pending and sig.entry is not None:
+            drift, allowed = abs(market - sig.entry), cfg.max_entry_drift * abs(sig.entry - sig.sl)
+            if drift > allowed:
+                # Price is on the profit side of the entry zone: wait for it to come
+                # back with a limit order. On the stop-loss side: too late, skip.
+                waiting_for_zone = (market < sig.entry) != is_buy
+                if not (waiting_for_zone and cfg.limit_if_away_from_entry):
+                    raise Skip(f"price {market} moved too far from signal entry {sig.entry}")
+                pending = True
+        price = sig.entry if pending else market
 
         if (sig.sl < price) != is_buy:
             raise Skip(f"price {price} is already past the stop loss {sig.sl}")
-        if not sig.pending and sig.entry is not None:
-            drift, allowed = abs(market - sig.entry), cfg.max_entry_drift * abs(sig.entry - sig.sl)
-            if drift > allowed:
-                raise Skip(f"price {market} moved too far from signal entry {sig.entry}")
         tps = [tp for tp in sig.tps if (tp > price) == is_buy]
         if sig.tps and not tps:
             raise Skip("price is already beyond every take profit")
@@ -108,7 +118,7 @@ class Trader:
         volume = round(math.floor(total / n / step + 1e-9) * step, 8)
         targets = tps[:n] if tps else [0.0]
 
-        if sig.pending:
+        if pending:
             action = mt5.TRADE_ACTION_PENDING
             if is_buy:
                 otype = mt5.ORDER_TYPE_BUY_LIMIT if price < market else mt5.ORDER_TYPE_BUY_STOP
@@ -126,13 +136,14 @@ class Trader:
                 "action": action, "symbol": name, "volume": volume, "type": otype,
                 "price": round(price, info.digits), "sl": round(sig.sl, info.digits),
                 "tp": round(tp, info.digits), "deviation": cfg.deviation_points,
-                "magic": cfg.magic, "comment": "tg-copier",
+                "magic": cfg.magic, "comment": tag,
                 "type_time": mt5.ORDER_TIME_GTC, "type_filling": filling,
             }
-            if sig.pending and cfg.pending_expiry_minutes > 0:
+            if pending and cfg.pending_expiry_minutes > 0:
                 req["type_time"] = mt5.ORDER_TIME_SPECIFIED
                 req["expiration"] = int(tick.time) + cfg.pending_expiry_minutes * 60
-            desc = f"{sig.side.upper()} {volume} {name} @ {req['price']} sl={req['sl']} tp={req['tp'] or '-'}"
+            kind = f"{sig.side.upper()} LIMIT/STOP" if pending else sig.side.upper()
+            desc = f"{kind} {volume} {name} @ {req['price']} sl={req['sl']} tp={req['tp'] or '-'}"
 
             if cfg.dry_run:
                 res = mt5.order_check(req)
@@ -147,6 +158,62 @@ class Trader:
             else:
                 detail = f"{res.retcode} {res.comment}" if res is not None else str(mt5.last_error())
                 report.append(f"FAILED {desc}: {detail}")
+        for line in report:
+            log.info(line)
+        return report
+
+    # --------------------------------------------------------------- management
+    def _mine(self, items, tag: str | None):
+        return [i for i in items or () if i.magic == self.cfg.magic and (tag is None or i.comment == tag)]
+
+    def _send(self, req: dict, desc: str) -> str:
+        if self.cfg.dry_run:
+            return f"[DRY RUN] would {desc}"
+        res = self.mt5.order_send(req)
+        if res is not None and res.retcode in (self.mt5.TRADE_RETCODE_DONE, self.mt5.TRADE_RETCODE_PLACED):
+            return f"OK {desc}"
+        detail = f"{res.retcode} {res.comment}" if res is not None else str(self.mt5.last_error())
+        return f"FAILED {desc}: {detail}"
+
+    def breakeven(self, tag: str | None = None) -> list[str]:
+        """Move the stop loss to the entry price on the bot's open positions."""
+        out = []
+        for p in self._mine(self.mt5.positions_get(), tag):
+            if p.sl == p.price_open:
+                continue
+            req = {"action": self.mt5.TRADE_ACTION_SLTP, "position": p.ticket, "symbol": p.symbol,
+                   "sl": p.price_open, "tp": p.tp}
+            out.append(self._send(req, f"move SL to breakeven {p.price_open} on {p.symbol} #{p.ticket}"))
+        return out or ["no open positions to move to breakeven"]
+
+    def cancel_pending(self, tag: str | None = None) -> list[str]:
+        out = []
+        for o in self._mine(self.mt5.orders_get(), tag):
+            req = {"action": self.mt5.TRADE_ACTION_REMOVE, "order": o.ticket}
+            out.append(self._send(req, f"cancel pending order on {o.symbol} #{o.ticket}"))
+        return out or ["no pending orders to cancel"]
+
+    def close_positions(self, tag: str | None = None) -> list[str]:
+        mt5, out = self.mt5, []
+        for p in self._mine(mt5.positions_get(), tag):
+            was_buy = p.type == mt5.POSITION_TYPE_BUY
+            tick, info = mt5.symbol_info_tick(p.symbol), mt5.symbol_info(p.symbol)
+            req = {"action": mt5.TRADE_ACTION_DEAL, "position": p.ticket, "symbol": p.symbol,
+                   "volume": p.volume, "type": mt5.ORDER_TYPE_SELL if was_buy else mt5.ORDER_TYPE_BUY,
+                   "price": tick.bid if was_buy else tick.ask, "deviation": self.cfg.deviation_points,
+                   "magic": self.cfg.magic, "comment": "tg-close", "type_filling": self._filling(info)}
+            out.append(self._send(req, f"close {p.volume} {p.symbol} #{p.ticket}"))
+        return out or ["no open positions to close"]
+
+    def manage(self, command: str, tag: str | None = None) -> list[str]:
+        if command == "breakeven":
+            report = self.breakeven(tag)
+        elif command == "close":
+            report = self.cancel_pending(tag) + self.close_positions(tag)
+        else:  # cancel
+            report = self.cancel_pending(tag)
+            if self.cfg.cancel_closes_positions:
+                report += self.close_positions(tag)
         for line in report:
             log.info(line)
         return report

@@ -135,3 +135,25 @@ def parse_signal(text: str) -> tuple[Signal | None, str]:
     tps.sort(reverse=not is_buy)
 
     return Signal(side, symbol, sl, tps, entry, pending), ""
+
+
+BREAKEVEN_RE = re.compile(
+    r"\b(?:set|move|put|secure)\b.{0,25}\b(?:be|b/e|break\s*-?\s*even)\b"
+    r"|\bbreak\s*-?\s*even\s+now\b|\bsl\s+(?:to\s+)?(?:be|entry|break\s*-?\s*even)\b", re.I)
+CANCEL_RE = re.compile(r"^\W*cancel\b|\bcancel\s+(?:it|this|the|that|order|trade|signal)\b", re.I)
+CLOSE_RE = re.compile(
+    r"\bclose\s+(?:it|all|now|this|everything|early|manually|(?:the\s+|your\s+)?(?:trade|position|order)s?)\b", re.I)
+
+
+def parse_command(text: str) -> str | None:
+    """Recognise short follow-up instructions: "breakeven", "cancel" or "close"."""
+    text = _normalise(text or "").strip()
+    if not text or len(text) > 80:      # long messages are commentary, not instructions
+        return None
+    if BREAKEVEN_RE.search(text):
+        return "breakeven"
+    if CANCEL_RE.search(text):
+        return "cancel"
+    if CLOSE_RE.search(text):
+        return "close"
+    return None

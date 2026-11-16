@@ -76,7 +76,7 @@ def test_max_lot_caps_size():
 
 
 @pytest.mark.parametrize("sig,cfg,reason", [
-    (Signal("buy", "XAUUSD", 2640.0, [2660.0], 2630.0), {}, "moved too far"),
+    (Signal("buy", "XAUUSD", 2640.0, [2680.0], 2665.0), {}, "moved too far"),
     (Signal("buy", "XAUUSD", 2655.0, [2660.0]), {}, "past the stop loss"),
     (Signal("buy", "XAUUSD", 2640.0, [2650.1]), {}, "beyond every take profit"),
     (Signal("buy", "EURUSD", 1.08, [1.09]), {}, "not found at broker"),
@@ -105,3 +105,62 @@ def test_detect_suffix():
     assert detect_suffix(["EURUSD.pro", "XAUUSD.pro"]) == ".pro"
     assert detect_suffix(["XAUUSDm", "US30m"]) == "m"
     assert detect_suffix([]) == ""
+
+
+# --- entry zones and follow-up instructions ----------------------------------
+FakeMT5.TRADE_ACTION_SLTP, FakeMT5.TRADE_ACTION_REMOVE, FakeMT5.POSITION_TYPE_BUY = 6, 8, 0
+ZONE = dict(side="sell", symbol="XAUUSD", sl=3863.0, tps=[3850.0, 3845.0, 3810.0], entry=3856.5)
+
+
+def test_zone_market_when_price_is_in_zone():
+    t, m = make(FakeMT5(bid=3856.0, ask=3856.2), risk_percent=3.0)
+    t.execute(Signal(**ZONE), tag="tg-42")
+    assert [(r["action"], r["type"], r["price"], r["tp"]) for r in m.sent] == [
+        (1, 1, 3856.0, 3850.0), (1, 1, 3856.0, 3845.0), (1, 1, 3856.0, 3810.0)]
+    assert {r["comment"] for r in m.sent} == {"tg-42"}
+
+
+def test_zone_limit_when_price_has_not_reached_it():
+    t, m = make(FakeMT5(bid=3851.0, ask=3851.2), risk_percent=3.0)
+    t.execute(Signal(**ZONE))
+    # sell limit at the zone; TP1 3850 still valid relative to the entry
+    assert [(r["action"], r["type"], r["price"]) for r in m.sent] == [(5, 3, 3856.5)] * 3
+
+
+def test_zone_skipped_when_price_ran_towards_stop():
+    t, m = make(FakeMT5(bid=3861.0, ask=3861.2))
+    with pytest.raises(Skip, match="moved too far"):
+        t.execute(Signal(**ZONE))
+
+
+def pos(ticket, comment, **kw):
+    return NS(ticket=ticket, magic=770077, comment=comment, symbol="XAUUSD", sl=3863.0, tp=3810.0,
+              price_open=3856.0, volume=0.05, type=1, **kw)
+
+
+def test_breakeven_targets_replied_signal_only():
+    m = FakeMT5(); m.open = [pos(1, "tg-42"), pos(2, "tg-43"), NS(ticket=3, magic=1, comment="manual")]
+    t, _ = make(m)
+    t.manage("breakeven", "tg-42")
+    assert m.sent == [{"action": 6, "position": 1, "symbol": "XAUUSD", "sl": 3856.0, "tp": 3810.0}]
+    m.sent.clear()
+    t.manage("breakeven")                       # not a reply -> every bot position, never manual ones
+    assert [r["position"] for r in m.sent] == [1, 2]
+
+
+def test_cancel_removes_pending_only_and_close_closes():
+    m = FakeMT5(); m.open = [pos(1, "tg-42")]
+    m.orders_get = lambda: [NS(ticket=9, magic=770077, comment="tg-42", symbol="XAUUSD")]
+    t, _ = make(m)
+    t.manage("cancel")
+    assert m.sent == [{"action": 8, "order": 9}]
+    m.sent.clear()
+    t.manage("close")
+    assert [(r["action"], r.get("position"), r.get("type")) for r in m.sent] == [(8, None, None), (1, 1, 0)]
+    assert m.sent[1]["price"] == m.ask and m.sent[1]["volume"] == 0.05
+
+
+def test_management_respects_dry_run():
+    m = FakeMT5(); m.open = [pos(1, "tg-42")]
+    t, _ = make(m, dry_run=True)
+    assert "DRY RUN" in t.manage("breakeven")[0] and m.sent == []

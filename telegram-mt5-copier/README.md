@@ -61,22 +61,29 @@ Understood out of the box: `BUY/SELL/LONG/SHORT`, `limit`/`stop` pending orders,
 pairs (`EURUSD`, `EUR/USD`), metals, crypto, major indices, aliases like `GOLD`,
 entry prices or zones (`2650-2653`), `SL` / `Stop Loss`, and any number of
 `TP` / `TP1` / `Take Profit` / `Target` levels. Messages without a stop loss, and
-updates such as "TP1 hit" or "move SL to BE", are ignored.
+status updates such as "TP1 hit", are ignored.
 
 ## What it does with a signal
 
 - **Sizing** – `risk_percent` of balance for the *whole* signal (or `fixed_lot`),
   capped by `max_lot`, split into one position per take profit (up to `max_tps`).
   If the size is too small to split, it opens one position at TP1.
-- **Market signals** execute at the current price. They are skipped if price has
-  already moved more than `max_entry_drift` × the stop distance from the posted entry,
-  or is past the SL or every TP.
+- **Entry price or zone** (`Sell XAUUSD 3855-3858`): if price is at the zone, it enters
+  at market. If price has not reached the zone yet, it places a limit order at the
+  middle of the zone (`limit_if_away_from_entry`). If price has already run towards
+  the stop loss by more than `max_entry_drift` × the stop distance, it skips.
 - **Limit/stop signals** become pending orders at the posted entry.
+- **Follow-up messages** are acted on:
+  - `Set breakeven` / `Move SL to BE` → stop loss moved to the entry price
+  - `Cancel it` → pending orders removed (open trades too if `cancel_closes_positions`)
+  - `Close it` / `Close all` → pending orders removed and open trades closed
+
+  If the message is a reply to a signal, only that signal's trades are touched;
+  otherwise all trades opened by the bot. Trades you open by hand are never touched.
 - **Safety** – `max_open_trades`, `allowed_symbols`, a stop loss is always required,
   each message is traded once, and old messages are ignored.
 
-It does **not** manage trades afterwards (break-even, partial closes, "close now"
-messages) — SL and TP are set on the order and MT5 handles the rest.
+Status messages such as "TP1 hit", "BE hit" or "in" are ignored.
 
 ## Tests
 

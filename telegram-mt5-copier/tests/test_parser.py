@@ -70,3 +70,22 @@ def test_tps_sorted_nearest_first():
 def test_rejected(text, reason):
     sig, why = parse_signal(text)
     assert sig is None and reason in why, (sig, why)
+
+
+# --- the real channel format -------------------------------------------------
+def test_channel_format():
+    s = ok("1. Sell XAUUSD 3855-3858⚡\n\nSL : 3863\n\nTP1 : 3850\nTP2 : 3845\nTP3 : 3810")
+    assert (s.side, s.symbol, s.entry, s.sl, s.tps, s.pending) == (
+        "sell", "XAUUSD", 3856.5, 3863.0, [3850.0, 3845.0, 3810.0], False)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Set breakeven", "breakeven"), ("Set breakeven now", "breakeven"), ("Move SL to BE", "breakeven"),
+    ("Cancel it", "cancel"), ("Close it now", "close"), ("Close all trades", "close"),
+    ("BE hit", None), ("TP1 HIT + 50 PIPS ✅", None), ("in", None), ("Sell Gold now", None),
+    ("Ready for this new week ?", None), ("Market closed for today", None),
+])
+def test_commands(text, expected):
+    from copier.parser import parse_command
+    assert parse_command(text) == expected
+    assert parse_signal(text)[0] is None
