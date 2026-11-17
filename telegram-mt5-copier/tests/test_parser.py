@@ -93,6 +93,8 @@ def cmds(text):
     ("Set breakeven", ["breakeven"]), ("Set breakeven now", ["breakeven"]), ("Move SL to BE", ["breakeven"]),
     ("Srt breakenven now", ["breakeven"]), ("Ok set breakeven now if you are in", ["breakeven"]),
     ("Srt breakenven and take Tp1 at 3901", ["breakeven", "take TP1 at 3901.0"]),
+    ("Set Breakeven and Take TP1 at 3870", ["breakeven", "take TP1 at 3870.0"]),
+    ("Sey be now", ["breakeven"]), ("Set be now", ["breakeven"]), ("Srt be", ["breakeven"]),
     # targets and trailing stops
     ("Take tp1 now", ["take TP1 now"]), ("Take tp1 nox", ["take TP1 now"]), ("Takt tp1 now", ["take TP1 now"]),
     ("Mov SL at 3890", ["move SL to 3890.0"]),
@@ -107,7 +109,8 @@ def cmds(text):
     ("Buy Now", ["enter now (buy)"]), ("Activ buy now", ["enter now (buy)"]),
     ("Cancel", ["cancel"]), ("Cancel it", ["cancel"]), ("Close it now", ["close"]), ("Close all trades", ["close"]),
     # reports and chatter must do nothing
-    ("BE hit", []), ("Breakeven hit", []), ("TP1 HIT + 50 PIPS ✅", []), ("SL HIT 😢", []), ("in", []), ("In", []),
+    ("BE hit", []), ("Breakeven hit", []), ("Set", []), ("be careful now", []), ("Sell to be safe", []),
+    ("See you tomorrow, be ready", []), ("TP1 HIT + 50 PIPS ✅", []), ("SL HIT 😢", []), ("in", []), ("In", []),
     ("Sorry , not TP1 , BE hit before 😢", []), ("I Didn’t  move it myself", []),
     ("Be hit , not the time to annonce to take tp1 at 3887", []),
     ("Buu gold 3890", []), ("3890.3", []), ("I m not in for 1 pips !!!", []), ("Are you in ? yes 👍", []),

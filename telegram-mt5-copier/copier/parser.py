@@ -145,7 +145,7 @@ def parse_signal(text: str) -> tuple[Signal | None, str]:
 HIT_RE = re.compile(r"\bhits?\b", re.I)                 # "TP1 HIT", "BE hit": reports, not instructions
 BREAKEVEN_RE = re.compile(
     r"\bbreak\s*-?\s*e\w{1,5}n\b"                       # breakeven, break even, "breakenven"
-    r"|\b(?:set|move|put|sl)\b(?:\s+(?:the|your|sl|stop|to|at|on)){0,3}\s+b/?e\b"   # "move SL to BE"
+    r"|\b(?:s[a-z]t|se[a-z]|move|put|sl)\b(?:\s+(?:the|your|sl|stop|to|at|on)){0,3}\s+b/?e\b"   # "move SL to BE", "Sey be"
     r"|\bsl\s+(?:to|at)\s+entry\b", re.I)
 MOVE_SL_RE = re.compile(
     rf"\bmov\w{{0,3}}\s+(?:the\s+|your\s+)?(?:sl|stop(?:\s*loss)?)\s*(?:at|to|a|@|=|:)?\s*({NUM})", re.I)
