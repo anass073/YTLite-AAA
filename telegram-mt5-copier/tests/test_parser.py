@@ -107,7 +107,11 @@ def cmds(text):
     # enter now
     ("Sell Gold now", ["enter now (sell)"]), ("Buy gold now", ["enter now (buy)"]),
     ("Buy Now", ["enter now (buy)"]), ("Activ buy now", ["enter now (buy)"]),
-    ("Cancel", ["cancel"]), ("Cancel it", ["cancel"]), ("Close it now", ["close"]), ("Close all trades", ["close"]),
+    ("Cancel", ["cancel"]), ("Cancel it", ["cancel"]), ("Cancel the order", ["cancel"]), ("Cancel signal 3", ["cancel"]),
+    # withdrawing an earlier instruction is not "cancel the orders"
+    ("Cancel TP , we will wait 3872 because rest just entry 65 for me", []), ("Cancel tp1", []),
+    ("Cancel the TP", []), ("Cancel take tp1", []), ("cancel BE", []), ("Cancel breakeven", []),
+    ("Cancel SL move", []), ("Rest just pne entry for me", []), ("Close it now", ["close"]), ("Close all trades", ["close"]),
     # reports and chatter must do nothing
     ("BE hit", []), ("Breakeven hit", []), ("Set", []), ("be careful now", []), ("Sell to be safe", []),
     ("See you tomorrow, be ready", []), ("TP1 HIT + 50 PIPS ✅", []), ("SL HIT 😢", []), ("in", []), ("In", []),

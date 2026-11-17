@@ -151,7 +151,10 @@ MOVE_SL_RE = re.compile(
     rf"\bmov\w{{0,3}}\s+(?:the\s+|your\s+)?(?:sl|stop(?:\s*loss)?)\s*(?:at|to|a|@|=|:)?\s*({NUM})", re.I)
 TAKE_TP_RE = re.compile(rf"\btak\w{{0,3}}\s+(?:the\s+)?tp\s*(\d)\b(?:\s*(?:at|to|a|@|=|:)?\s*({NUM})\b)?", re.I)
 ENTER_NOW_RE = re.compile(r"\b(buy|sell)\s+(?:[\w/]+\s+)?now\b|\bactiv\w*\s+(buy|sell)\b", re.I)
-CANCEL_RE = re.compile(r"^\W*cancel\b|\bcancel\s+(?:it|this|the|that|order|trade|signal)\b", re.I)
+# "Cancel TP / BE / SL ..." withdraws an earlier instruction; it must not remove our orders.
+NOT_ORDERS = r"(?!\s+(?:the\s+|my\s+|that\s+)?(?:tp\d?|t/p|take|targets?|be\b|b/e|break|sl|s/l|stop|move|close))"
+WITHDRAW_RE = re.compile(r"^\W*(?:cancel|ignore|forget)\b", re.I)
+CANCEL_RE = re.compile(rf"^\W*cancel\b{NOT_ORDERS}|\bcancel\s+(?:it|this|that|(?:the\s+)?(?:order|trade|signal))\b", re.I)
 CLOSE_RE = re.compile(
     r"\bclose\s+(?:it|all|now|this|everything|early|manually|(?:the\s+|your\s+)?(?:trade|position|order)s?)\b", re.I)
 
@@ -181,6 +184,8 @@ def parse_commands(text: str) -> list[Command]:
         return []
     if CANCEL_RE.search(text):
         return [Command("cancel")]
+    if WITHDRAW_RE.search(text):         # "Cancel TP, we will wait 3872", "Cancel breakeven": undo, never do
+        return []
     if CLOSE_RE.search(text):
         return [Command("close")]
     out = []
