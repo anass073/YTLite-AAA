@@ -153,6 +153,8 @@ TAKE_TP_RE = re.compile(rf"\btak\w{{0,3}}\s+(?:the\s+)?tp\s*(\d)\b(?:\s*(?:at|to
 ENTER_NOW_RE = re.compile(r"\b(buy|sell)\s+(?:[\w/]+\s+)?now\b|\bactiv\w*\s+(buy|sell)\b", re.I)
 # "Cancel TP / BE / SL ..." withdraws an earlier instruction; it must not remove our orders.
 NOT_ORDERS = r"(?!\s+(?:the\s+|my\s+|that\s+)?(?:tp\d?|t/p|take|targets?|be\b|b/e|break|sl|s/l|stop|move|close))"
+TP_WORD_RE = re.compile(r"\b(?:tp\d?|t/p|take|targets?)\b", re.I)
+WAIT_PRICE_RE = re.compile(rf"\b(?:wait(?:\s+for)?|at|to|until|@)\s*({NUM})\b", re.I)
 WITHDRAW_RE = re.compile(r"^\W*(?:cancel|ignore|forget)\b", re.I)
 CANCEL_RE = re.compile(rf"^\W*cancel\b{NOT_ORDERS}|\bcancel\s+(?:it|this|that|(?:the\s+)?(?:order|trade|signal))\b", re.I)
 CLOSE_RE = re.compile(
@@ -161,7 +163,7 @@ CLOSE_RE = re.compile(
 
 @dataclass
 class Command:
-    name: str                      # breakeven | cancel | close | move_sl | take_tp | activate
+    name: str                      # breakeven | cancel | close | move_sl | take_tp | undo_tp | activate
     price: float | None = None     # move_sl: new stop; take_tp: new target (None = take it now)
     n: int | None = None           # take_tp: which take profit
     side: str | None = None        # activate: "buy" | "sell"
@@ -171,6 +173,8 @@ class Command:
             return f"move SL to {self.price}"
         if self.name == "take_tp":
             return f"take TP{self.n} " + (f"at {self.price}" if self.price else "now")
+        if self.name == "undo_tp":
+            return "undo the last TP change" + (f", new target {self.price}" if self.price else "")
         if self.name == "activate":
             return f"enter now ({self.side})"
         return self.name
@@ -185,7 +189,10 @@ def parse_commands(text: str) -> list[Command]:
     if CANCEL_RE.search(text):
         return [Command("cancel")]
     if WITHDRAW_RE.search(text):         # "Cancel TP, we will wait 3872", "Cancel breakeven": undo, never do
-        return []
+        if TP_WORD_RE.search(text):
+            m = WAIT_PRICE_RE.search(text)
+            return [Command("undo_tp", price=float(m.group(1)) if m else None)]
+        return []                        # a stop is never loosened again: breakeven / SL withdrawals do nothing
     if CLOSE_RE.search(text):
         return [Command("close")]
     out = []

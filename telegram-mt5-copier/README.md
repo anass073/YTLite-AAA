@@ -94,6 +94,8 @@ status updates such as "TP1 hit", are ignored.
   | `Take TP1 now` | Closes the TP1 position at market. |
   | `Take TP2 at 3947` | Moves that position's target; closes it if price is already there. |
   | `Buy now` / `Sell gold now` / `Activ buy now` | If the bot is still waiting with limit orders, and price is within `activate_max_distance` of them, they become market orders. Otherwise nothing happens. |
+  | `Cancel TP` / `Cancel TP, we will wait 3872` | Puts back the targets changed by the last "Take TPn at X" (or moves those same trades to the level named); closes a position whose restored target is already reached. Only for changes made since the bot started. |
+  | `Cancel breakeven` / `Cancel SL ...` | Nothing: a stop is never loosened again |
   | `Cancel` / `Cancel it` | Pending orders removed (open trades too if `cancel_closes_positions`). |
   | `Close it` / `Close all` | Pending orders removed and open trades closed. |
 

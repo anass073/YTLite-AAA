@@ -109,8 +109,10 @@ def cmds(text):
     ("Buy Now", ["enter now (buy)"]), ("Activ buy now", ["enter now (buy)"]),
     ("Cancel", ["cancel"]), ("Cancel it", ["cancel"]), ("Cancel the order", ["cancel"]), ("Cancel signal 3", ["cancel"]),
     # withdrawing an earlier instruction is not "cancel the orders"
-    ("Cancel TP , we will wait 3872 because rest just entry 65 for me", []), ("Cancel tp1", []),
-    ("Cancel the TP", []), ("Cancel take tp1", []), ("cancel BE", []), ("Cancel breakeven", []),
+    ("Cancel TP , we will wait 3872 because rest just entry 65 for me", ["undo the last TP change, new target 3872.0"]),
+    ("Cancel tp1", ["undo the last TP change"]), ("Cancel the TP", ["undo the last TP change"]),
+    ("Cancel take tp1", ["undo the last TP change"]), ("Forget TP1, wait for 3880", ["undo the last TP change, new target 3880.0"]),
+    ("cancel BE", []), ("Cancel breakeven", []),
     ("Cancel SL move", []), ("Rest just pne entry for me", []), ("Close it now", ["close"]), ("Close all trades", ["close"]),
     # reports and chatter must do nothing
     ("BE hit", []), ("Breakeven hit", []), ("Set", []), ("be careful now", []), ("Sell to be safe", []),

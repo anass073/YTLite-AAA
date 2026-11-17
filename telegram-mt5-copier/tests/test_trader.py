@@ -518,3 +518,43 @@ def test_trailing_stop_for_sells_and_off_by_default():
     assert m.sent[-1]["sl"] == pytest.approx(3853.85, abs=0.011) and m.sent[-1]["sl"] < 3856.0
     m2 = buys(FakeMT5(bid=3920.0, ask=3920.2)); t2, _ = make(m2)
     assert t2.housekeeping() == [] and m2.sent == []
+
+
+# --- "Cancel TP": revert the last take-profit change ---------------------------------
+def test_cancel_tp_puts_the_previous_target_back():
+    m = buys(FakeMT5(bid=3891.0, ask=3891.2)); t, _ = make(m)
+    m.orders_get = lambda: [limit(9, "tg-77-1", tp=3894.0), limit(10, "tg-77-2", tp=3898.0)]
+    t.manage(Command("take_tp", price=3893.0, n=1))                 # "Take TP1 at 3893"
+    assert [(r["action"], r.get("position", r.get("order")), r["tp"]) for r in m.sent] == [(6, 1, 3893.0), (7, 9, 3893.0)]
+    m.open[0].tp = 3893.0; m.sent.clear()
+    t.manage(Command("undo_tp"))                                      # "Cancel TP"
+    assert [(r["action"], r.get("position", r.get("order")), r["tp"]) for r in m.sent] == [(6, 1, 3894.0), (7, 9, 3894.0)]
+    m.sent.clear()
+    assert "nothing to revert" in t.manage(Command("undo_tp"))[0] and m.sent == []   # only once
+
+
+def test_cancel_tp_with_a_new_level_and_when_price_is_already_there():
+    m = buys(FakeMT5(bid=3891.0, ask=3891.2)); t, _ = make(m)
+    t.manage(Command("take_tp", price=3893.0, n=1))
+    m.open[0].tp = 3893.0; m.sent.clear()
+    t.manage(Command("undo_tp", price=3896.0))                       # "Cancel TP, we will wait 3896"
+    assert [(r["position"], r["tp"]) for r in m.sent] == [(1, 3896.0)]
+    m.open[0].tp = 3896.0
+    t.manage(Command("take_tp", price=3892.0, n=1)); m.open[0].tp = 3892.0; m.sent.clear()
+    m.bid, m.ask = 3894.5, 3894.7
+    t.manage(Command("undo_tp"))                                      # old target 3896 not reached: moved back
+    assert [(r["action"], r["tp"]) for r in m.sent] == [(6, 3896.0)]
+
+
+def test_cancel_tp_closes_if_the_restored_target_is_already_reached():
+    m = buys(FakeMT5(bid=3891.0, ask=3891.2)); t, _ = make(m)
+    t.manage(Command("take_tp", price=3897.0, n=2))                  # moved TP2 further: 3898 -> 3897
+    m.open[1].tp = 3897.0; m.sent.clear()
+    m.bid, m.ask = 3898.5, 3898.7
+    t.manage(Command("undo_tp"))                                      # 3898 already reached: take it
+    assert [(r["action"], r["position"]) for r in m.sent] == [(1, 2)]
+
+
+def test_cancel_tp_without_any_change_does_nothing():
+    m = buys(FakeMT5(bid=3891.0, ask=3891.2)); t, _ = make(m)
+    assert "nothing to revert" in t.manage(Command("undo_tp", price=3872.0))[0] and m.sent == []

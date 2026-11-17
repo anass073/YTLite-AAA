@@ -25,6 +25,8 @@ class Trader:
         self._be_wanted: set[int] = set()   # positions waiting for price to allow a breakeven stop
         self._trailing: set[int] = set()    # positions whose trailing stop has started (announced once)
         self._trail_failed: set[int] = set()
+        # targets from before the last "Take TPn at X", so "Cancel TP" can put them back
+        self._tp_undo: dict[str, dict[int, float]] = {"positions": {}, "orders": {}}
 
     def connect(self) -> str:
         c, kw = self.mt5_cfg, {}
@@ -389,36 +391,77 @@ class Trader:
                "magic": self.cfg.magic, "comment": "tg-close", "type_filling": self._filling(info)}
         return self._send(req, f"close {p.volume} {p.symbol} #{p.ticket}")
 
+    def _done(self, line: str) -> bool:
+        return line.startswith(("OK", "[DRY RUN]"))
+
+    def _set_position_tp(self, p, price: float, label: str) -> tuple[str, bool]:
+        """Move a position's target to `price`, or close it if price is already there.
+        Returns (report line, True if the target was moved)."""
+        mt5 = self.mt5
+        tick, info = mt5.symbol_info_tick(p.symbol), mt5.symbol_info(p.symbol)
+        buy = self._is_buy(p)
+        market = tick.bid if buy else tick.ask
+        tp = round(price, info.digits)
+        if abs(tp - market) / market > PLAUSIBLE:
+            return f"ignored: {price} is not a plausible take profit for {p.symbol} #{p.ticket}", False
+        if (market >= tp) if buy else (market <= tp):
+            return self._close(p), False                      # price is already there: take it
+        req = {"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket, "symbol": p.symbol, "sl": p.sl, "tp": tp}
+        line = self._send(req, f"move {label} to {tp} on {p.symbol} #{p.ticket}")
+        return line, self._done(line)
+
+    def _set_order_tp(self, o, price: float, label: str) -> tuple[str, bool]:
+        mt5 = self.mt5
+        if abs(price - o.price_open) / o.price_open > PLAUSIBLE:
+            return f"ignored: {price} is not a plausible take profit for pending {o.symbol} #{o.ticket}", False
+        tp = round(price, mt5.symbol_info(o.symbol).digits)
+        req = {"action": mt5.TRADE_ACTION_MODIFY, "order": o.ticket, "price": o.price_open,
+               "sl": o.sl, "tp": tp, "type_time": o.type_time, "expiration": o.time_expiration}
+        line = self._send(req, f"move {label} to {tp} on pending {o.symbol} #{o.ticket}")
+        return line, self._done(line)
+
     def take_tp(self, n: int, price: float | None = None, tag: str | None = None) -> list[str]:
         """"Take TP1 now" closes the TP1 position; "Take TP1 at 3868" moves its target."""
         mt5, out = self.mt5, []
+        undo = {"positions": {}, "orders": {}}
         for p in self._mine(mt5.positions_get(), tag):
             if self._tp_index(p.comment) != n:
                 continue
             if price is None:
                 out.append(self._close(p))
                 continue
-            tick, info = mt5.symbol_info_tick(p.symbol), mt5.symbol_info(p.symbol)
-            buy = self._is_buy(p)
-            market = tick.bid if buy else tick.ask
-            tp = round(price, info.digits)
-            if abs(tp - market) / market > PLAUSIBLE:
-                out.append(f"ignored: {price} is not a plausible take profit for {p.symbol} #{p.ticket}")
-            elif (market >= tp) if buy else (market <= tp):
-                out.append(self._close(p))             # price is already there: take it
-            else:
-                req = {"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket, "symbol": p.symbol,
-                       "sl": p.sl, "tp": tp}
-                out.append(self._send(req, f"move TP{n} to {tp} on {p.symbol} #{p.ticket}"))
+            line, moved = self._set_position_tp(p, price, f"TP{n}")
+            out.append(line)
+            if moved:
+                undo["positions"][p.ticket] = p.tp
         if price is not None:
             for o in self._mine(mt5.orders_get(), tag):
-                if self._tp_index(o.comment) != n or abs(price - o.price_open) / o.price_open > PLAUSIBLE:
+                if self._tp_index(o.comment) != n:
                     continue
-                tp = round(price, mt5.symbol_info(o.symbol).digits)
-                req = {"action": mt5.TRADE_ACTION_MODIFY, "order": o.ticket, "price": o.price_open,
-                       "sl": o.sl, "tp": tp, "type_time": o.type_time, "expiration": o.time_expiration}
-                out.append(self._send(req, f"move TP{n} to {tp} on pending {o.symbol} #{o.ticket}"))
+                line, moved = self._set_order_tp(o, price, f"TP{n}")
+                if not line.startswith("ignored"):
+                    out.append(line)
+                if moved:
+                    undo["orders"][o.ticket] = o.tp
+        if undo["positions"] or undo["orders"]:
+            self._tp_undo = undo
         return out or [f"no open TP{n} position"]
+
+    def undo_tp(self, price: float | None = None, tag: str | None = None) -> list[str]:
+        """"Cancel TP": put back the targets changed by the last "Take TPn at X", or, when the
+        channel names a new level ("we will wait 3872"), move those same trades to it."""
+        mt5, out = self.mt5, []
+        saved, self._tp_undo = self._tp_undo, {"positions": {}, "orders": {}}
+        for p in self._mine(mt5.positions_get(), tag):
+            if p.ticket in saved["positions"]:
+                line, _ = self._set_position_tp(p, price or saved["positions"][p.ticket], "TP back")
+                out.append(line)
+        for o in self._mine(mt5.orders_get(), tag):
+            if o.ticket in saved["orders"]:
+                out.append(self._set_order_tp(o, price or saved["orders"][o.ticket], "TP back")[0])
+        if not out:
+            return ["nothing to revert: no open trade had its take profit changed since the bot started"]
+        return out
 
     def activate(self, side: str | None = None, tag: str | None = None) -> list[str]:
         """"Buy now": the channel entered at market. Turn our waiting limit orders into
@@ -613,6 +656,8 @@ class Trader:
                 report.append(f"{len(pending)} order(s) not filled yet - left waiting at the entry zone")
         elif c.name == "move_sl":
             report = self.move_sl(c.price, tag)
+        elif c.name == "undo_tp":
+            report = self.undo_tp(c.price, tag)
         elif c.name == "take_tp":
             report = self.take_tp(c.n, c.price, tag)
         elif c.name == "activate":
