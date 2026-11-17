@@ -21,7 +21,9 @@ HELP = """Commands (send them to your Saved Messages):
 /breakeven - move all open positions to breakeven now, your own trades included
 /cancel - remove the bot's waiting limit orders
 /closeall - close all bot positions and remove waiting orders
-/risk - show the size per signal (/risk 0.02 to change, /risk reset)"""
+/risk - show the size per signal (/risk 0.02 to change, /risk reset)
+/trail 0.1 - trailing stop on ALL open trades, 0.1% of the price behind it (/trail off, /trail to show)"""
+MAX_TRAIL_PERCENT = 2.0
 MAX_RISK_PERCENT = 5.0
 LOG_PREFIX = re.compile(r"^\d{4}-\d\d-\d\d (\d\d:\d\d:\d\d),\d+ \w+ ")
 
@@ -54,6 +56,11 @@ class Remote:
         if isinstance(size, (int, float)) and 0 < size <= self._cap:
             self._set_size(float(size))
 
+        self._config_trail = t.trailing_stop_percent
+        trail = state.get("trail")
+        if isinstance(trail, (int, float)) and 0 <= trail <= MAX_TRAIL_PERCENT:
+            self._set_trail(float(trail))
+
         self._summary_at = self._parse_time(cfg.telegram.daily_summary_time)
         # Started after today's summary time: the next one is tomorrow.
         self._summary_day = now.date() if self._summary_at and now.time() >= self._summary_at else None
@@ -73,8 +80,15 @@ class Remote:
         else:
             self.cfg.trading.risk_percent = value
 
+    def _set_trail(self, percent: float | None) -> None:
+        """None = back to config.yaml; 0 = off; otherwise trail every open trade at this %."""
+        self.cfg.trading.trailing_stop_percent = self._config_trail if percent is None else percent
+        self.trader.trail_all = percent is not None and percent > 0
+        self._trail = percent
+
     def _save(self) -> None:
-        state = {"paused": self.paused, "size": self.size if self.size != self._config_size else None}
+        state = {"paused": self.paused, "size": self.size if self.size != self._config_size else None,
+                 "trail": getattr(self, "_trail", None)}
         self.state_path.write_text(json.dumps(state))
 
     def startup_notes(self) -> list[str]:
@@ -84,6 +98,8 @@ class Remote:
             notes.append("PAUSED by /pause - new signals are not traded until you send /resume")
         if self.size != self._config_size:
             notes.append(f"Size per signal is {self.size:g} (set by /risk; config.yaml says {self._config_size:g})")
+        if getattr(self, "_trail", None) is not None:
+            notes.append("Trailing stop: " + self._trail_text() + " (set by /trail)")
         return notes
 
     # ------------------------------------------------------------------ commands
@@ -125,6 +141,8 @@ class Remote:
                 return "\n".join(self.trader.cancel_pending(None))
             if cmd == "/closeall":
                 return "\n".join(self.trader.manage("close"))
+            if cmd == "/trail":
+                return self._trail_cmd(args)
             if cmd == "/risk":
                 return self._risk(args)
         except Exception as e:                      # always answer, so silence means "not running"
@@ -145,7 +163,52 @@ class Remote:
                                             if self.last_message else "none since start"),
                 "Last signal: " + (f"{self.last_signal[0]:%d %b %H:%M} {self.last_signal[1]}"
                                    if self.last_signal else "none since start"),
-                size, *self.trader.status()]
+                size, "Trailing stop: " + self._trail_text(), *self.trader.status()]
+
+    def _trail_text(self) -> str:
+        pct = self.cfg.trading.trailing_stop_percent
+        if pct <= 0:
+            return "off"
+        scope = "all open trades" if self.trader.trail_all else (
+            "bot trades and yours" if self.cfg.trading.manage_manual_trades else "bot trades")
+        return f"{pct:g}% behind the price, on {scope}"
+
+    def _example_distance(self, pct: float) -> str:
+        positions = self.trader.mt5.positions_get() or ()
+        for p in positions:
+            tick = self.trader.mt5.symbol_info_tick(p.symbol)
+            if tick is not None and tick.bid:
+                return f" (about {tick.bid * pct / 100:.2f} on {p.symbol} at {tick.bid:g})"
+        return ""
+
+    def _trail_cmd(self, args: list[str]) -> str:
+        if not args:
+            return ("Trailing stop: " + self._trail_text() +
+                    "\n/trail 0.1 puts it on every open trade, /trail off stops it, "
+                    "/trail reset goes back to config.yaml.")
+        if args[0] in ("off", "0", "stop"):
+            self._set_trail(0.0)
+            self._save()
+            return "Trailing stop is OFF. Stops already moved stay where they are."
+        if args[0] == "reset":
+            self._set_trail(None)
+            self._save()
+            return "Trailing stop is back to config.yaml: " + self._trail_text()
+        try:
+            pct = float(args[0].replace(",", ".").rstrip("%"))
+        except ValueError:
+            return "Use /trail <percent>, for example /trail 0.1, or /trail off."
+        if not 0 < pct <= MAX_TRAIL_PERCENT:
+            return f"Refused: use a value above 0 and at most {MAX_TRAIL_PERCENT:g} (percent of the price)."
+        self._set_trail(pct)
+        self._save()
+        self.trader._ensure_connected()
+        open_now = len(self.trader.mt5.positions_get() or ())
+        started = self.trader.trail_stops()
+        lines = [f"Trailing stop ON: {pct:g}% behind the price{self._example_distance(pct)}, "
+                 f"for all {open_now} open trade(s), yours included, and new ones.",
+                 "It starts on a trade once that distance locks in a profit and only ever tightens the stop."]
+        return "\n".join(lines + started)
 
     def _risk(self, args: list[str]) -> str:
         unit = "lots per signal" if self._fixed else "% of balance per signal"

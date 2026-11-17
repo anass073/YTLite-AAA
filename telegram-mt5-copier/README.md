@@ -148,6 +148,7 @@ Only you can use them. No answer within a few seconds means the bot is not runni
 | `/cancel` | Remove the bot's waiting limit orders |
 | `/closeall` | Close all bot positions and remove waiting orders, immediately and without asking |
 | `/risk` | Show the size per signal. `/risk 0.02` changes it; raising it needs `/risk 0.05 confirm`; `/risk reset` goes back to `config.yaml`. Capped by `max_lot`. Survives a restart. |
+| `/trail 0.1` | Trailing stop on **all** open trades (yours too) at 0.1% of the price behind it (~3.90 on gold). `/trail off` stops it, `/trail` shows it, `/trail reset` goes back to `config.yaml`. Survives a restart. |
 | `/help` | This list |
 
 **Daily summary** – every weekday at `daily_summary_time` (default 22:00, PC time) the bot

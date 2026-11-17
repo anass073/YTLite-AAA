@@ -25,6 +25,7 @@ class Trader:
         self._be_wanted: set[int] = set()   # positions waiting for price to allow a breakeven stop
         self._trailing: set[int] = set()    # positions whose trailing stop has started (announced once)
         self._trail_failed: set[int] = set()
+        self.trail_all = False              # /trail: the trailing stop follows every open trade, yours too
         # targets from before the last "Take TPn at X", so "Cancel TP" can put them back
         self._tp_undo: dict[str, dict[int, float]] = {"positions": {}, "orders": {}}
 
@@ -546,7 +547,8 @@ class Trader:
         if pct <= 0:
             return []
         mt5, out = self.mt5, []
-        for p in self._watched(mt5.positions_get()):
+        positions = mt5.positions_get()
+        for p in (list(positions or ()) if self.trail_all else self._watched(positions)):
             tick, info = mt5.symbol_info_tick(p.symbol), mt5.symbol_info(p.symbol)
             if tick is None or info is None:
                 continue

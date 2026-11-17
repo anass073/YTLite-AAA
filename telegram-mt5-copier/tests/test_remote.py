@@ -147,3 +147,22 @@ def test_own_trade_breakeven_is_queued_until_price_allows(tmp_path):
     assert "queued" in r.handle("/breakeven") and m.sent == []
     m.bid = 3891.5
     assert "was queued" in r.trader.housekeeping()[0] and m.sent[0]["position"] == 50
+
+
+def test_trail_command_covers_all_open_trades(tmp_path):
+    m = buys(FakeMT5(bid=3895.0, ask=3895.2)); m.open = m.open[2:]              # bot runner: buy 3890
+    m.open.append(NS(ticket=50, magic=0, comment="", symbol="XAUUSD", sl=3880.0, tp=3930.0, price_open=3889.0,
+                     volume=0.05, type=0, profit=3.0))
+    r, _, cfg = make(tmp_path, m)
+    assert "Trailing stop: off" in r.handle("/trail")
+    reply = r.handle("/trail 0,1")
+    assert "Trailing stop ON: 0.1%" in reply and "for all 2 open trade(s)" in reply and "about 3.90" in reply
+    assert {q["position"] for q in m.sent} == {3, 50} and cfg.trading.trailing_stop_percent == 0.1
+    assert "0.1% behind the price, on all open trades" in r.handle("/status")
+    r2, _, cfg2 = make(tmp_path, m)                                              # restart keeps it
+    assert cfg2.trading.trailing_stop_percent == 0.1 and r2.trader.trail_all and "Trailing stop" in r2.startup_notes()[-1]
+    assert "OFF" in r2.handle("/trail off") and cfg2.trading.trailing_stop_percent == 0 and not r2.trader.trail_all
+    m.sent.clear()
+    assert r2.trader.housekeeping() == [] and m.sent == []
+    assert "Refused" in r2.handle("/trail 5") and "Use /trail" in r2.handle("/trail fast")
+    assert "back to config.yaml: off" in r2.handle("/trail reset")
