@@ -6,3 +6,4 @@ __pycache__/
 .venv/
 copier.log
 copier.state.json
+copier.lock

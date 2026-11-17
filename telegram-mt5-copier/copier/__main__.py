@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 
@@ -186,6 +187,28 @@ async def run(cfg, args) -> None:
     await client.run_until_disconnected()
 
 
+ALREADY_RUNNING = 3      # exit code run.bat checks, so it does not keep restarting
+
+
+def single_instance(path: str = "copier.lock"):
+    """Hold a lock for as long as this process lives. Returns None if another copy holds it.
+    Two copies would share the Telegram session file (\"database is locked\") and would
+    place every trade twice."""
+    f = open(path, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="copier", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -207,6 +230,12 @@ def main() -> None:
         sig, why = parse_signal(sys.stdin.read())
         print(sig if sig else f"Not a signal: {why}")
         return
+    if not args.report:                       # everything below uses the Telegram session file
+        lock = single_instance()              # noqa: F841  (kept open until the process ends)
+        if lock is None:
+            print("Another copy of the bot is already running (or setup is open). Close the other "
+                  "bot window first - two copies would place every trade twice.")
+            sys.exit(ALREADY_RUNNING)
     try:
         if args.report:
             from .report import run as report
