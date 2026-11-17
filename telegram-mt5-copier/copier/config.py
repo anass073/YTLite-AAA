@@ -45,6 +45,7 @@ class TradingCfg:
     pending_expiry_minutes: int = 120           # cancel unfilled limit/stop orders after this; 0 = never
     breakeven_offset: float = 0.0               # put the breakeven stop this fraction of the stop distance in profit (covers slippage)
     auto_breakeven_at: float = 0.0              # move to breakeven by itself once price is this fraction of the stop distance in profit; 0 = off
+    manage_manual_trades: bool = False          # automatic breakeven and trailing stop also look after trades you open yourself
     trailing_stop_percent: float = 0.0          # keep the stop this % of the price behind the market once that locks in profit; 0 = off
     breakeven_cancels_pending: bool = False     # "set breakeven" also removes this signal's orders that have not filled
     cancel_closes_positions: bool = False       # "cancel it" also closes already-open trades

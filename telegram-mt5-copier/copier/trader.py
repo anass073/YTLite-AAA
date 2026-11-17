@@ -253,6 +253,14 @@ class Trader:
         return [i for i in items or () if i.magic == self.cfg.magic
                 and (tag is None or i.comment == tag or i.comment.startswith(tag + "-"))]
 
+    def _manual(self, items):
+        """Positions / orders on the account that the bot did not open (your own trades)."""
+        return [i for i in items or () if i.magic != self.cfg.magic]
+
+    def _watched(self, items):
+        """What automatic breakeven and the trailing stop look after."""
+        return list(items or ()) if self.cfg.manage_manual_trades else self._mine(items, None)
+
     @staticmethod
     def _signal_of(comment: str) -> str:
         return "-".join(comment.split("-")[:2])            # "tg-1234-2" -> "tg-1234"
@@ -306,10 +314,13 @@ class Trader:
         return {"action": self.mt5.TRADE_ACTION_SLTP, "position": p.ticket, "symbol": p.symbol,
                 "sl": self._be_price(p), "tp": p.tp}
 
-    def breakeven(self, tag: str | None = None) -> list[str]:
-        """Move the stop loss to the entry price on the bot's open positions."""
+    def breakeven(self, tag: str | None = None, include_manual: bool = False) -> list[str]:
+        """Move the stop loss to the entry price on the bot's open positions
+        (and on your own trades too with include_manual, for /breakeven)."""
         out = []
-        for p in self._mine(self.mt5.positions_get(), tag):
+        positions = self.mt5.positions_get()
+        targets = self._mine(positions, tag) + (self._manual(positions) if include_manual else [])
+        for p in targets:
             if self._secured(p):
                 continue
             if not self._can_breakeven(p):
@@ -329,7 +340,7 @@ class Trader:
         positions = self.mt5.positions_get()
         if positions is None:                          # terminal unavailable: keep waiting
             return []
-        mine, out = {p.ticket: p for p in self._mine(positions, None)}, []
+        mine, out = {p.ticket: p for p in positions}, []        # only tickets we queued ourselves
         for ticket in list(self._be_wanted):
             p = mine.get(ticket)
             if p is None or self._secured(p):          # closed, or already protected
@@ -348,7 +359,7 @@ class Trader:
         if trigger <= 0:
             return []
         out = []
-        for p in self._mine(self.mt5.positions_get(), None):
+        for p in self._watched(self.mt5.positions_get()):
             if not p.sl or self._secured(p) or p.ticket in self._be_wanted:
                 continue
             tick = self.mt5.symbol_info_tick(p.symbol)
@@ -518,6 +529,10 @@ class Trader:
         floating = sum(getattr(p, "profit", 0.0) for p in positions)
         lines.append(f"Bot trades: {len(positions)} open ({floating:+.2f} {acc.currency}), "
                      f"{len(waiting)} limit order(s) waiting")
+        manual = self._manual(mt5.positions_get())
+        if manual:
+            lines.append(f"Your own trades: {len(manual)} open "
+                         f"({sum(getattr(p, 'profit', 0.0) for p in manual):+.2f} {acc.currency})")
         if cfg.max_daily_loss_percent > 0:
             today = round(-self.daily_loss_percent(), 1) + 0.0      # + 0.0 turns -0.0 into 0.0
             lines.append(f"Today: {today:+.1f}%  (new trades stop at "
@@ -531,7 +546,7 @@ class Trader:
         if pct <= 0:
             return []
         mt5, out = self.mt5, []
-        for p in self._mine(mt5.positions_get(), None):
+        for p in self._watched(mt5.positions_get()):
             tick, info = mt5.symbol_info_tick(p.symbol), mt5.symbol_info(p.symbol)
             if tick is None or info is None:
                 continue
@@ -568,13 +583,16 @@ class Trader:
                  mt5.ORDER_TYPE_BUY_STOP: "BUY STOP", mt5.ORDER_TYPE_SELL_STOP: "SELL STOP"}
         label = lambda item: f"TP{self._tp_index(item.comment)}" if self._tp_index(item.comment) else ""
         out = []
-        for p in self._mine(mt5.positions_get(), None):
+        positions, orders = mt5.positions_get(), mt5.orders_get()
+        for p in self._mine(positions, None) + self._manual(positions):
+            tag = label(p) if p.magic == self.cfg.magic else "(yours)"
             out.append(f"{'BUY' if self._is_buy(p) else 'SELL'} {p.volume} {p.symbol} @ {p.price_open}  "
-                       f"sl {p.sl or '-'}  tp {p.tp or '-'}  {getattr(p, 'profit', 0.0):+.2f} {currency}  {label(p)}".rstrip())
-        for o in self._mine(mt5.orders_get(), None):
+                       f"sl {p.sl or '-'}  tp {p.tp or '-'}  {getattr(p, 'profit', 0.0):+.2f} {currency}  {tag}".rstrip())
+        for o in self._mine(orders, None) + self._manual(orders):
+            tag = label(o) if o.magic == self.cfg.magic else "(yours)"
             out.append(f"waiting: {names.get(o.type, 'ORDER')} {o.volume_current} {o.symbol} @ {o.price_open}  "
-                       f"sl {o.sl or '-'}  tp {o.tp or '-'}  {label(o)}".rstrip())
-        return out or ["No open positions or waiting orders from the bot."]
+                       f"sl {o.sl or '-'}  tp {o.tp or '-'}  {tag}".rstrip())
+        return out or ["No open positions or waiting orders."]
 
     def housekeeping(self) -> list[str]:
         """Called every couple of seconds: queued and automatic breakevens, expired pending orders."""

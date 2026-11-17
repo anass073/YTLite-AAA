@@ -120,3 +120,30 @@ def test_daily_summary_can_be_turned_off(tmp_path):
     cfg.telegram.daily_summary_time = ""
     r2 = Remote(cfg, r.trader, tmp_path / "s.json", tmp_path / "l.log")
     assert not r2.summary_due(datetime(2026, 11, 17, 23, 0))
+
+
+def test_breakeven_and_trades_include_your_own_trades(tmp_path):
+    m = buys(FakeMT5(bid=3893.0, ask=3893.2))
+    own = NS(ticket=50, magic=0, comment="", symbol="XAUUSD", sl=3880.0, tp=3900.0, price_open=3891.0,
+             volume=0.05, type=0, profit=1.0)
+    m.open.append(own)
+    for p in m.open: p.profit = getattr(p, "profit", 0.0)
+    r, _, _ = make(tmp_path, m)
+    reply = r.handle("/breakeven")
+    assert [(q["position"], q["sl"]) for q in m.sent] == [(1, 3890.0), (2, 3890.0), (3, 3890.0), (50, 3891.0)]
+    assert reply.count("OK move SL to breakeven") == 4
+    assert "BUY 0.05 XAUUSD @ 3891.0  sl 3880.0  tp 3900.0  +1.00 USD  (yours)" in r.handle("/trades")
+    assert "Your own trades: 1 open (+1.00 USD)" in r.handle("/status")
+    m.sent.clear()
+    r.handle("/closeall")                                   # never closes your own trade
+    assert 50 not in [q.get("position") for q in m.sent]
+
+
+def test_own_trade_breakeven_is_queued_until_price_allows(tmp_path):
+    m = FakeMT5(bid=3890.5, ask=3890.7)
+    m.open = [NS(ticket=50, magic=0, comment="", symbol="XAUUSD", sl=3880.0, tp=3900.0, price_open=3891.0,
+                 volume=0.05, type=0, profit=-0.25)]
+    r, _, _ = make(tmp_path, m)
+    assert "queued" in r.handle("/breakeven") and m.sent == []
+    m.bid = 3891.5
+    assert "was queued" in r.trader.housekeeping()[0] and m.sent[0]["position"] == 50

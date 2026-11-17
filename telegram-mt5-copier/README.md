@@ -116,6 +116,9 @@ status updates such as "TP1 hit", are ignored.
   distance (`0.1` = 0.1% of the price, about 3.90 on gold at 3900). It starts only once
   that distance locks in a profit, and only ever moves in the profit direction. It does
   not protect a trade that goes against you from the start: the original stop does that.
+- **Your own trades** – trades you open by hand are never touched by channel messages,
+  `/closeall` or `/cancel`. `/breakeven` does include them. With `manage_manual_trades: true`
+  automatic breakeven and the trailing stop look after them too.
 - **Edited signals** – if the channel edits the SL or TPs of a signal the bot traded,
   its positions and pending orders are moved to the new levels (a stop already at
   breakeven is left alone). Only works for signals traded since the bot last started.
@@ -137,11 +140,11 @@ Only you can use them. No answer within a few seconds means the bot is not runni
 | Command | What it does |
 |---|---|
 | `/status` | Running or paused, live or dry run, MT5 connection, balance, open trades, today's result, last channel message |
-| `/trades` | Every open position and waiting order with entry, SL, TP and current profit |
+| `/trades` | Every open position and waiting order with entry, SL, TP and current profit; your own trades are marked "(yours)" |
 | `/report` | The results report for the last 30 days (`/report 7` for 7 days) |
 | `/last` | The last 15 lines of the log (`/last 30` for more) |
 | `/pause` / `/resume` | Stop / start taking new signals. Open trades stay managed. Survives a restart. |
-| `/breakeven` | Move all bot positions to breakeven now |
+| `/breakeven` | Move all open positions to breakeven now, including trades you opened yourself |
 | `/cancel` | Remove the bot's waiting limit orders |
 | `/closeall` | Close all bot positions and remove waiting orders, immediately and without asking |
 | `/risk` | Show the size per signal. `/risk 0.02` changes it; raising it needs `/risk 0.05 confirm`; `/risk reset` goes back to `config.yaml`. Capped by `max_lot`. Survives a restart. |

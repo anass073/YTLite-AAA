@@ -558,3 +558,15 @@ def test_cancel_tp_closes_if_the_restored_target_is_already_reached():
 def test_cancel_tp_without_any_change_does_nothing():
     m = buys(FakeMT5(bid=3891.0, ask=3891.2)); t, _ = make(m)
     assert "nothing to revert" in t.manage(Command("undo_tp", price=3872.0))[0] and m.sent == []
+
+
+def test_auto_breakeven_and_trailing_on_own_trades_only_when_enabled():
+    own = lambda: NS(ticket=50, magic=0, comment="", symbol="XAUUSD", sl=3882.0, tp=3930.0, price_open=3890.0,
+                     volume=0.05, type=0)
+    m = FakeMT5(bid=3895.0, ask=3895.2); m.open = [own()]
+    t, _ = make(m, auto_breakeven_at=0.4, trailing_stop_percent=0.1)
+    assert t.housekeeping() == [] and m.sent == []          # off by default: your trade is left alone
+    m2 = FakeMT5(bid=3895.0, ask=3895.2); m2.open = [own()]
+    t2, _ = make(m2, auto_breakeven_at=0.4, trailing_stop_percent=0.1, manage_manual_trades=True)
+    t2.housekeeping()
+    assert m2.sent and {r["position"] for r in m2.sent} == {50}

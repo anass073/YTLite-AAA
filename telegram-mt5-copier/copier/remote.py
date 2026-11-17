@@ -13,12 +13,12 @@ log = logging.getLogger("copier.remote")
 
 HELP = """Commands (send them to your Saved Messages):
 /status - is the bot running, MT5 connection, balance, open trades
-/trades - every open position and waiting order
+/trades - every open position and waiting order (yours marked)
 /report - results of the last 30 days (/report 7 for 7 days)
 /last - the last lines of the log (/last 30 for more)
 /pause - stop taking new signals (open trades stay managed)
 /resume - take signals again
-/breakeven - move all bot positions to breakeven now
+/breakeven - move all open positions to breakeven now, your own trades included
 /cancel - remove the bot's waiting limit orders
 /closeall - close all bot positions and remove waiting orders
 /risk - show the size per signal (/risk 0.02 to change, /risk reset)"""
@@ -117,8 +117,9 @@ class Remote:
                 self.paused = False
                 self._save()
                 return "Resumed. New signals will be traded again."
-            if cmd == "/breakeven":
-                return "\n".join(self.trader.manage("breakeven"))
+            if cmd == "/breakeven":                  # bot trades and your own trades
+                self.trader._ensure_connected()
+                return "\n".join(self.trader.breakeven(None, include_manual=True))
             if cmd == "/cancel":
                 self.trader._ensure_connected()
                 return "\n".join(self.trader.cancel_pending(None))
