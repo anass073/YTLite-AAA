@@ -280,17 +280,27 @@ class Trader:
         return f"OK {desc}" if ok else f"FAILED {desc}: {detail}"
 
     # ---- breakeven
+    def _be_price(self, p) -> float:
+        """Entry price, plus breakeven_offset (a fraction of the stop distance) on the profit
+        side so that normal slippage on the stop lands at zero instead of a small loss."""
+        info = self.mt5.symbol_info(p.symbol)
+        risk = abs(p.price_open - p.sl) if p.sl else 0.0
+        offset = self.cfg.breakeven_offset * risk
+        price = p.price_open + offset if self._is_buy(p) else p.price_open - offset
+        return round(price, info.digits) if info is not None else price
+
     def _can_breakeven(self, p) -> bool:
-        """The broker only accepts a stop at the entry once price has moved past it."""
+        """The broker only accepts the stop once price has moved past it."""
         tick, info = self.mt5.symbol_info_tick(p.symbol), self.mt5.symbol_info(p.symbol)
         if tick is None or info is None:
             return False
         gap = getattr(info, "trade_stops_level", 0) * getattr(info, "point", 0.0)
-        return tick.bid > p.price_open + gap if self._is_buy(p) else tick.ask < p.price_open - gap
+        be = self._be_price(p)
+        return tick.bid > be + gap if self._is_buy(p) else tick.ask < be - gap
 
     def _be_request(self, p) -> dict:
         return {"action": self.mt5.TRADE_ACTION_SLTP, "position": p.ticket, "symbol": p.symbol,
-                "sl": p.price_open, "tp": p.tp}
+                "sl": self._be_price(p), "tp": p.tp}
 
     def breakeven(self, tag: str | None = None) -> list[str]:
         """Move the stop loss to the entry price on the bot's open positions."""
@@ -300,10 +310,10 @@ class Trader:
                 continue
             if not self._can_breakeven(p):
                 self._be_wanted.add(p.ticket)
-                out.append(f"breakeven queued for {p.symbol} #{p.ticket}: price is not past the entry "
-                           f"{p.price_open} yet - it will be set as soon as it is")
+                out.append(f"breakeven queued for {p.symbol} #{p.ticket}: price is not past "
+                           f"{self._be_price(p)} yet - it will be set as soon as it is")
                 continue
-            line = self._send(self._be_request(p), f"move SL to breakeven {p.price_open} on {p.symbol} #{p.ticket}")
+            line = self._send(self._be_request(p), f"move SL to breakeven {self._be_price(p)} on {p.symbol} #{p.ticket}")
             if line.startswith("FAILED"):
                 self._be_wanted.add(p.ticket)          # retried by housekeeping()
             out.append(line)
@@ -320,9 +330,36 @@ class Trader:
             p = mine.get(ticket)
             if p is None or self._secured(p):          # closed, or already protected
                 self._be_wanted.discard(ticket)
-            elif self._can_breakeven(p) and self._try(self._be_request(p))[0]:
-                self._be_wanted.discard(ticket)
-                out.append(f"OK moved SL to breakeven {p.price_open} on {p.symbol} #{p.ticket} (was queued)")
+            elif self._can_breakeven(p):
+                be = self._be_price(p)                 # before the stop moves: it depends on the old stop
+                if self._try(self._be_request(p))[0]:
+                    self._be_wanted.discard(ticket)
+                    out.append(f"OK moved SL to breakeven {be} on {p.symbol} #{p.ticket} (was queued)")
+        return out
+
+    def auto_breakeven(self) -> list[str]:
+        """Watch the price ourselves: once a position is auto_breakeven_at (a fraction of its
+        stop distance) in profit, move its stop to breakeven without waiting for the channel."""
+        trigger = self.cfg.auto_breakeven_at
+        if trigger <= 0:
+            return []
+        out = []
+        for p in self._mine(self.mt5.positions_get(), None):
+            if not p.sl or self._secured(p) or p.ticket in self._be_wanted:
+                continue
+            tick = self.mt5.symbol_info_tick(p.symbol)
+            if tick is None:
+                continue
+            gain = tick.bid - p.price_open if self._is_buy(p) else p.price_open - tick.ask
+            if gain < trigger * abs(p.price_open - p.sl) or not self._can_breakeven(p):
+                continue
+            be = self._be_price(p)
+            ok, detail = self._try(self._be_request(p))
+            if ok:
+                out.append(f"OK auto breakeven: {p.symbol} #{p.ticket} is {gain:.2f} in profit, SL moved to {be}")
+            else:
+                self._be_wanted.add(p.ticket)          # keep trying, but do not report every few seconds
+                out.append(f"FAILED auto breakeven on {p.symbol} #{p.ticket}: {detail} - will keep trying")
         return out
 
     # ---- stop / target changes
@@ -460,8 +497,8 @@ class Trader:
         return out or ["No open positions or waiting orders from the bot."]
 
     def housekeeping(self) -> list[str]:
-        """Called every few seconds: queued breakevens and expired pending orders."""
-        out = self.retry_breakeven()
+        """Called every couple of seconds: queued and automatic breakevens, expired pending orders."""
+        out = self.retry_breakeven() + self.auto_breakeven()
         for line in out:
             log.info(line)
         return out + self.expire_pending()

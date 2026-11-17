@@ -438,3 +438,53 @@ def test_entry_mode_does_not_change_single_price_or_explicit_limit_signals():
         t.execute(Signal("buy", "XAUUSD", 3866.0, [3878.0, 3882.0], 3872.0, False, 3872.0, 3872.0))
         t.execute(Signal("buy", "XAUUSD", 3866.0, [3878.0], 3870.0, True, 3869.0, 3871.0))
         assert [r["price"] for r in m.sent] == [3872.0, 3872.0, 3870.0]
+
+
+# --- breakeven offset and automatic breakeven --------------------------------------
+def test_breakeven_offset_puts_the_stop_in_profit():
+    m = buys(FakeMT5(bid=3893.0, ask=3893.2)); t, _ = make(m, breakeven_offset=0.05)    # stop distance 8
+    report = t.manage("breakeven")
+    assert [(r["action"], r["sl"]) for r in m.sent] == [(6, 3890.4)] * 3 and "breakeven 3890.4" in report[0]
+    m = FakeMT5(bid=3850.0, ask=3850.2); m.open = [pos(1, "tg-42-1")]                   # sell @3856, sl 3863
+    t, _ = make(m, breakeven_offset=0.1)
+    t.manage("breakeven")
+    assert m.sent[0]["sl"] == 3855.3
+
+
+def test_breakeven_offset_waits_until_price_is_past_the_offset():
+    m = buys(FakeMT5(bid=3890.2, ask=3890.4)); t, _ = make(m, breakeven_offset=0.05)
+    assert "not past 3890.4" in t.manage("breakeven")[0] and m.sent == []               # past entry, not past the stop
+    m.bid = 3890.6
+    assert "breakeven 3890.4" in t.housekeeping()[0]
+    assert [r["sl"] for r in m.sent] == [3890.4] * 3
+
+
+def test_auto_breakeven_triggers_on_price():
+    m = buys(FakeMT5(bid=3893.1, ask=3893.3)); t, _ = make(m, auto_breakeven_at=0.4, breakeven_offset=0.05)
+    assert t.housekeeping() == [] and m.sent == []                                      # needs 3.2 in profit
+    m.bid = 3893.3
+    report = t.housekeeping()
+    assert len(report) == 3 and "auto breakeven" in report[0] and "3.30 in profit" in report[0]
+    assert [(r["action"], r["sl"], r["tp"]) for r in m.sent] == [(6, 3890.4, 3894.0), (6, 3890.4, 3898.0), (6, 3890.4, 3930.0)]
+    for p, r in zip(m.open, m.sent): p.sl = r["sl"]
+    m.sent.clear()
+    assert t.housekeeping() == [] and m.sent == []                                      # once only
+
+
+def test_auto_breakeven_for_sells_and_off_by_default():
+    m = FakeMT5(bid=3853.0, ask=3853.2); m.open = [pos(1, "tg-42-1"), NS(ticket=7, magic=1, comment="manual")]
+    t, _ = make(m, auto_breakeven_at=0.4)                                               # sell @3856, sl 3863: needs 2.8
+    t.housekeeping()
+    assert m.sent == [{"action": 6, "position": 1, "symbol": "XAUUSD", "sl": 3856.0, "tp": 3810.0}]
+    m2 = buys(FakeMT5(bid=3899.0, ask=3899.2)); t2, _ = make(m2)
+    assert t2.housekeeping() == [] and m2.sent == []
+
+
+def test_auto_breakeven_failure_is_reported_once_then_retried_quietly():
+    m = buys(FakeMT5(bid=3895.0, ask=3895.2)); m.open = m.open[:1]
+    answers = iter([NS(retcode=10016, comment="Invalid stops", order=0)])
+    real = m.order_send
+    m.order_send = lambda req: next(answers, None) or real(req)
+    t, _ = make(m, auto_breakeven_at=0.4)
+    assert "FAILED auto breakeven" in t.housekeeping()[0]
+    assert "was queued" in t.housekeeping()[0] and m.sent[-1]["sl"] == 3890.0

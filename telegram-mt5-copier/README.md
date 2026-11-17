@@ -102,6 +102,14 @@ status updates such as "TP1 hit", are ignored.
   A price that is more than 5% away from the market ("Take TP3 at 4902") is treated as
   a typo and ignored. Reports such as "TP1 hit", "BE hit" or "in" do nothing, and
   entry-specific instructions ("Close entry 69 and keep 71") are not understood.
+- **Breakeven with a buffer** – a stop is not a guaranteed price: in a fast move it fills
+  a little past it, so a stop exactly at the entry often closes slightly negative.
+  `breakeven_offset` puts the breakeven stop a fraction of the stop distance in profit
+  (`0.05` on an 8-point stop = entry + 0.40).
+- **Automatic breakeven** – with `auto_breakeven_at` the bot watches the price itself
+  (every 2 seconds) and moves a position to breakeven once it is that fraction of its
+  stop distance in profit (`0.4` on an 8-point stop = 3.20 in profit), without waiting
+  for the channel. Only while the bot is running.
 - **Edited signals** – if the channel edits the SL or TPs of a signal the bot traded,
   its positions and pending orders are moved to the new levels (a stop already at
   breakeven is left alone). Only works for signals traded since the bot last started.

@@ -43,6 +43,8 @@ class TradingCfg:
     entry_mode: str = "edge"                    # where in the entry zone to enter: edge | layered | best
     limit_if_away_from_entry: bool = True       # price not at the entry zone yet -> place a limit order there
     pending_expiry_minutes: int = 120           # cancel unfilled limit/stop orders after this; 0 = never
+    breakeven_offset: float = 0.0               # put the breakeven stop this fraction of the stop distance in profit (covers slippage)
+    auto_breakeven_at: float = 0.0              # move to breakeven by itself once price is this fraction of the stop distance in profit; 0 = off
     breakeven_cancels_pending: bool = False     # "set breakeven" also removes this signal's orders that have not filled
     cancel_closes_positions: bool = False       # "cancel it" also closes already-open trades
     require_tp: bool = False

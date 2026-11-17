@@ -159,7 +159,7 @@ async def run(cfg, args) -> None:
     async def sweep():
         """Every few seconds: apply queued breakevens, remove expired pending orders."""
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(2)
             async with lock:
                 try:
                     report = await asyncio.to_thread(trader.housekeeping)
