@@ -94,7 +94,8 @@ def cmds(text):
     ("Srt breakenven now", ["breakeven"]), ("Ok set breakeven now if you are in", ["breakeven"]),
     ("Srt breakenven and take Tp1 at 3901", ["breakeven", "take TP1 at 3901.0"]),
     # targets and trailing stops
-    ("Take tp1 now", ["take TP1 now"]), ("Take tp1 nox", ["take TP1 now"]),
+    ("Take tp1 now", ["take TP1 now"]), ("Take tp1 nox", ["take TP1 now"]), ("Takt tp1 now", ["take TP1 now"]),
+    ("Mov SL at 3890", ["move SL to 3890.0"]),
     ("Take TP1 at 3868", ["take TP1 at 3868.0"]), ("Take tp1 a 3885", ["take TP1 at 3885.0"]),
     ("Take TP2 at 3947", ["take TP2 at 3947.0"]), ("Take TP3 at 4902", ["take TP3 at 4902.0"]),
     ("120 pips running, Move SL at 3950 (+50 pips)", ["move SL to 3950.0"]),
