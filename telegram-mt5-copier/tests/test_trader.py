@@ -378,3 +378,17 @@ def test_daily_loss_ignores_broker_credit():
     m.account_info = lambda: NS(balance=200.0, equity=207.90, credit=47.90, login=1, server="x", currency="EUR")
     t, _ = make(m)                                 # equity 207.90 includes 47.90 credit -> really down 40 of 200
     assert round(t.daily_loss_percent(), 6) == 20.0
+
+
+def test_status_lines():
+    m = buys(FakeMT5(bid=3893.0, ask=3893.2, balance=200.0))
+    for p in m.open: p.profit = 1.5
+    m.orders_get = lambda: [limit(9, "tg-80-1")]
+    m.account_info = lambda: NS(balance=200.0, equity=252.40, credit=47.90, login=345, server="x", currency="EUR")
+    t, _ = make(m, max_daily_loss_percent=50.0)
+    assert t.status() == ["MT5: connected to the broker",
+                          "Account 345: balance 200.00, equity 204.50 EUR",
+                          "Bot trades: 3 open (+4.50 EUR), 1 limit order(s) waiting",
+                          "Today: +2.2%  (new trades stop at -50%)"]
+    m.terminal_info = lambda: None
+    assert "NOT reachable" in t.status()[0]

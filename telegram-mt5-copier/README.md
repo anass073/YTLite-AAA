@@ -104,6 +104,17 @@ status updates such as "TP1 hit", are ignored.
 - **Safety** – `max_open_trades`, `allowed_symbols`, a stop loss is always required,
   each message is traded once, and old messages are ignored.
 
+## Check on it from your phone
+
+Send one of these to your own **Saved Messages** in Telegram and the bot answers there:
+
+- `/status` – whether it is running, live or dry run, the MT5 connection, your balance,
+  open trades and waiting orders, today's result, and when the channel last posted
+- `/report` – the results report below for the last 30 days (`/report 7` for 7 days)
+- `/help` – the list of commands
+
+No answer within a few seconds means the bot is not running.
+
 ## Results report
 
 Double-click **`report.bat`** (or run `python -m copier --report --days 30`) to see what

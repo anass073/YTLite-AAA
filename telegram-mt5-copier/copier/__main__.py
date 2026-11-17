@@ -55,13 +55,17 @@ async def run(cfg, args) -> None:
     log.info("MT5 connected: %s", trader.connect())
     log.info("Mode: %s", "DRY RUN - no orders will be sent" if cfg.trading.dry_run else "LIVE TRADING")
 
+    me_id = (await client.get_me()).id
+    started = datetime.now()
+    last = {"time": None, "signal": None}            # last channel message / last signal seen
+
     done: set[tuple[int, int]] = set()
     traded: dict[tuple[int, int], object] = {}      # signals we acted on, to follow later edits
     unusable: set[tuple[int, int]] = set()          # seen live but not understood; an edit may fix them
     lock = asyncio.Lock()
 
-    async def notify(text: str) -> None:
-        if cfg.telegram.notify:
+    async def notify(text: str, always: bool = False) -> None:
+        if cfg.telegram.notify or always:
             try:
                 await client.send_message("me", text)
             except Exception:
@@ -84,6 +88,7 @@ async def run(cfg, args) -> None:
     async def handle(event):
         if event.chat_id not in chat_ids:
             return
+        last["time"] = datetime.now()
         key = (event.chat_id, event.id)
         if key in done:
             # An edit of a message we already acted on: follow changed SL / TP levels.
@@ -117,6 +122,7 @@ async def run(cfg, args) -> None:
         done.add(key)
         if sig:
             traded[key] = sig
+            last["signal"] = (datetime.now(), str(sig))
             await run_job(str(sig), lambda: trader.execute(sig, tag=f"tg-{event.id}"))
             return
         # A reply to a signal only affects that signal's trades; otherwise all of the bot's trades.
@@ -128,6 +134,43 @@ async def run(cfg, args) -> None:
 
         title = "Instruction: " + " + ".join(map(str, commands))
         await run_job(title + (" (for the replied-to signal)" if replied else ""), job, quiet_if_empty=True)
+
+    def ago(t: datetime) -> str:
+        minutes = int((datetime.now() - t).total_seconds() // 60)
+        return f"{minutes} min ago" if minutes < 120 else f"{minutes // 60} h ago"
+
+    async def control(event):
+        """Commands you send to your own Saved Messages: /status, /report [days], /help."""
+        if event.chat_id != me_id:
+            return
+        words = (event.raw_text or "").strip().lower().split()
+        if not words or words[0] not in ("/status", "/report", "/help"):
+            return
+        if (datetime.now(timezone.utc) - event.date).total_seconds() > cfg.telegram.max_signal_age_seconds:
+            return
+        log.info("Command from Saved Messages: %s", " ".join(words))
+        if words[0] == "/help":
+            await notify("Commands:\n/status - is the bot running, MT5 connection, open trades\n"
+                         "/report - results of the last 30 days\n/report 7 - results of the last 7 days", always=True)
+            return
+        async with lock:
+            try:
+                if words[0] == "/status":
+                    mode = "DRY RUN (no real orders)" if cfg.trading.dry_run else "LIVE"
+                    lines = [f"Bot is running - {mode}, started {started:%d %b %H:%M} ({ago(started)})",
+                             "Last channel message: " + (f"{last['time']:%H:%M} ({ago(last['time'])})"
+                                                         if last["time"] else "none since start"),
+                             "Last signal: " + (f"{last['signal'][0]:%d %b %H:%M} {last['signal'][1]}"
+                                                if last["signal"] else "none since start")]
+                    text = "\n".join(lines + await asyncio.to_thread(trader.status))
+                else:
+                    from .report import collect
+                    days = int(words[1]) if len(words) > 1 and words[1].isdigit() else 30
+                    text = "```\n" + await asyncio.to_thread(collect, trader.mt5, cfg, days) + "\n```"
+            except Exception as e:
+                log.exception("Command failed")
+                text = f"Bot is running, but {words[0]} failed: {e!r}"
+        await notify(text, always=True)
 
     async def sweep():
         """Every few seconds: apply queued breakevens, remove expired pending orders."""
@@ -144,9 +187,10 @@ async def run(cfg, args) -> None:
 
     sweeper = asyncio.create_task(sweep())  # noqa: F841  (keep a reference so it is not garbage collected)
 
+    client.add_event_handler(control, events.NewMessage())
     client.add_event_handler(handle, events.NewMessage())
     client.add_event_handler(handle, events.MessageEdited())  # groups that add SL/TP by editing
-    log.info("Listening for signals... Ctrl+C to stop")
+    log.info("Listening for signals... Ctrl+C to stop  (send /status or /report to your Saved Messages)")
     await client.run_until_disconnected()
 
 

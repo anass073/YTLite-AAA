@@ -402,6 +402,26 @@ class Trader:
     def close_positions(self, tag: str | None = None) -> list[str]:
         return [self._close(p) for p in self._mine(self.mt5.positions_get(), tag)] or ["no open positions to close"]
 
+    def status(self) -> list[str]:
+        """A few lines on the terminal, the account and the bot's trades (for /status)."""
+        mt5, cfg = self.mt5, self.cfg
+        term, acc = mt5.terminal_info(), mt5.account_info()
+        if term is None or acc is None:
+            return ["MT5: NOT reachable - is the terminal open and logged in?"]
+        lines = ["MT5: " + ("connected to the broker" if term.connected else "NO connection to the broker")
+                 + ("" if term.trade_allowed else " - Algo Trading is OFF")]
+        own = acc.equity - getattr(acc, "credit", 0.0)
+        lines.append(f"Account {acc.login}: balance {acc.balance:.2f}, equity {own:.2f} {acc.currency}")
+        positions, waiting = self._mine(mt5.positions_get(), None), self._mine(mt5.orders_get(), None)
+        floating = sum(getattr(p, "profit", 0.0) for p in positions)
+        lines.append(f"Bot trades: {len(positions)} open ({floating:+.2f} {acc.currency}), "
+                     f"{len(waiting)} limit order(s) waiting")
+        if cfg.max_daily_loss_percent > 0:
+            today = round(-self.daily_loss_percent(), 1) + 0.0      # + 0.0 turns -0.0 into 0.0
+            lines.append(f"Today: {today:+.1f}%  (new trades stop at "
+                         f"-{cfg.max_daily_loss_percent:g}%)")
+        return lines
+
     def housekeeping(self) -> list[str]:
         """Called every few seconds: queued breakevens and expired pending orders."""
         out = self.retry_breakeven()
