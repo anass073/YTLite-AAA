@@ -28,6 +28,10 @@ trading:
   activate_max_distance: 0.25    # "Buy now" turns a waiting limit order into a market order if price is this close
   market_entry_tolerance: 0.15   # enter at market if price is this close to the entry zone (fraction of the SL distance)
   deviation_points: 30           # max slippage for market orders
+  entry_mode: edge               # where in the entry zone to enter (see README):
+                                 #   edge    = all positions at the edge price reaches first (most fills, worst price)
+                                 #   layered = spread across the zone: edge, middle, best price
+                                 #   best    = all at the best price in the zone (fewest fills)
   limit_if_away_from_entry: true # price not at the entry zone yet -> limit order at the edge of the zone
   breakeven_cancels_pending: false # "set breakeven" also removes this signal's limit orders that have not filled yet
   cancel_closes_positions: false # "cancel it" removes pending orders; true = also close open trades

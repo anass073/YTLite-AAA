@@ -73,6 +73,17 @@ status updates such as "TP1 hit", are ignored.
   a limit order at the edge of the zone price will touch first (3855 for that sell),
   so it fills whenever the channel's own entry does. If price has already run towards
   the stop loss by more than `max_entry_drift` × the stop distance, it skips.
+- **Where in the zone** is set by `entry_mode`. For `Buy XAUUSD 3874-3871` with three
+  take profits:
+
+  | `entry_mode` | Entries | Trade-off |
+  |---|---|---|
+  | `edge` (default) | 3874, 3874, 3874 | Fills whenever price touches the zone, at the worst price in it |
+  | `layered` | 3874 (TP1), 3872.5 (TP2), 3871 (TP3) | Always gets in at the edge; the deeper entries only fill if price goes further into the zone |
+  | `best` | 3871, 3871, 3871 | Best price and smallest loss if stopped, but no trade at all when price only dips part-way |
+
+  A level price has already reached is bought or sold at market straight away; the
+  levels price has not reached yet become limit orders.
 - **Limit/stop signals** become pending orders at the posted entry.
 - **Follow-up messages** are acted on (spelling mistakes like "Srt breakenven" included):
 

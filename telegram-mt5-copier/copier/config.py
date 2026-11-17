@@ -40,6 +40,7 @@ class TradingCfg:
     activate_max_distance: float = 0.25         # "buy now": turn a waiting limit into a market order if price is this close (fraction of the SL distance)
     max_daily_loss_percent: float = 20.0        # no new trades once the account is down this much today; 0 = off
     deviation_points: int = 30                  # max slippage on market orders
+    entry_mode: str = "edge"                    # where in the entry zone to enter: edge | layered | best
     limit_if_away_from_entry: bool = True       # price not at the entry zone yet -> place a limit order there
     pending_expiry_minutes: int = 120           # cancel unfilled limit/stop orders after this; 0 = never
     breakeven_cancels_pending: bool = False     # "set breakeven" also removes this signal's orders that have not filled
@@ -76,4 +77,6 @@ def load(path: str | Path) -> Config:
     )
     if cfg.trading.risk_mode not in ("percent", "fixed"):
         raise ValueError("trading.risk_mode must be 'percent' or 'fixed'")
+    if cfg.trading.entry_mode not in ("edge", "layered", "best"):
+        raise ValueError("trading.entry_mode must be 'edge', 'layered' or 'best'")
     return cfg

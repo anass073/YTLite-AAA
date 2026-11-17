@@ -134,23 +134,27 @@ class Trader:
 
         is_buy = sig.side == "buy"
         market = tick.ask if is_buy else tick.bid
-        pending, price = sig.pending, sig.entry
-        if not pending and sig.entry is not None:
-            d = 1 if is_buy else -1
+        d = 1 if is_buy else -1
+        zone = None                 # (near edge, far edge, tolerance) when we may wait inside the zone
+        price = market              # reference price for the sanity checks and the sizing
+        if sig.pending:
+            price = sig.entry
+        elif sig.entry is not None:
             stop = abs(sig.entry - sig.sl)
             low = sig.entry if sig.entry_low is None else sig.entry_low
             high = sig.entry if sig.entry_high is None else sig.entry_high
-            near = high if is_buy else low      # edge of the zone price reaches first on a pullback
+            # near = edge price reaches first on a pullback; far = best price, closest to the stop
+            near, far = (high, low) if is_buy else (low, high)
+            tol = cfg.market_entry_tolerance * stop
             if (sig.entry - market) * d > cfg.max_entry_drift * stop:
                 raise Skip(f"price {market} moved too far from signal entry {sig.entry} towards the stop")
-            if (market - near) * d > cfg.market_entry_tolerance * stop:
-                # Price is on the profit side and has not come back to the zone:
-                # wait for it with a limit order at the edge it will touch first.
-                if not cfg.limit_if_away_from_entry:
-                    raise Skip(f"price {market} is not at the entry zone {low}-{high}")
-                pending, price = True, near
-        if not pending:
-            price = market
+            waiting = (market - near) * d > tol        # price has not come back to the zone yet
+            if waiting and not cfg.limit_if_away_from_entry:
+                raise Skip(f"price {market} is not at the entry zone {low}-{high}")
+            if cfg.limit_if_away_from_entry:
+                zone = (near, far, tol)
+            if waiting:
+                price = near
 
         if (sig.sl < price) != is_buy:
             raise Skip(f"price {price} is already past the stop loss {sig.sl}")
@@ -170,26 +174,40 @@ class Trader:
         volume = round(math.floor(total / n / step + 1e-9) * step, 8)
         targets = tps[:n] if tps else [0.0]
 
-        if pending:
-            action = mt5.TRADE_ACTION_PENDING
-            if is_buy:
-                otype = mt5.ORDER_TYPE_BUY_LIMIT if price < market else mt5.ORDER_TYPE_BUY_STOP
+        def entry_for(i: int) -> tuple[bool, float]:
+            """(wait with a pending order?, price) for the i-th position of this signal."""
+            if sig.pending:
+                return True, sig.entry
+            if zone is None:
+                return False, market
+            near, far, tol = zone
+            if cfg.entry_mode == "best":
+                level = far
+            elif cfg.entry_mode == "layered" and n > 1:
+                level = near + (far - near) * i / (n - 1)     # spread from the near edge to the far edge
             else:
-                otype = mt5.ORDER_TYPE_SELL_LIMIT if price > market else mt5.ORDER_TYPE_SELL_STOP
-            filling = mt5.ORDER_FILLING_RETURN
-        else:
-            action = mt5.TRADE_ACTION_DEAL
-            otype = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
-            filling = self._filling(info)
+                level = near
+            if (sig.sl < level) != is_buy:                    # never place an entry beyond the stop
+                level = near
+            # Price still has to come to this level -> limit order there; otherwise buy/sell now.
+            return ((market - level) * d > tol), level
 
-        # Let the broker expire unfilled orders if it supports that (works even when the
-        # bot is off); expire_pending() below covers brokers that do not.
-        broker_expiry = (pending and cfg.pending_expiry_minutes > 0
-                         and getattr(info, "expiration_mode", 0) & 4)
         report = []
-        for tp in targets:
-            if not pending:                     # fresh price for every market order
-                now = mt5.symbol_info_tick(name)
+        for i, tp in enumerate(targets):
+            pending, price = entry_for(i)
+            if pending:
+                action = mt5.TRADE_ACTION_PENDING
+                if is_buy:
+                    otype = mt5.ORDER_TYPE_BUY_LIMIT if price < market else mt5.ORDER_TYPE_BUY_STOP
+                else:
+                    otype = mt5.ORDER_TYPE_SELL_LIMIT if price > market else mt5.ORDER_TYPE_SELL_STOP
+                filling = mt5.ORDER_FILLING_RETURN
+            else:
+                action = mt5.TRADE_ACTION_DEAL
+                otype = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
+                filling = self._filling(info)
+                now = mt5.symbol_info_tick(name)             # fresh price for every market order
+                price = market
                 if now is not None and now.ask and now.bid:
                     price = now.ask if is_buy else now.bid
             req = {
@@ -200,7 +218,9 @@ class Trader:
                 "comment": f"{tag}-{sig.tps.index(tp) + 1 if tp else 1}",     # e.g. tg-1234-2 = TP2
                 "type_time": mt5.ORDER_TIME_GTC, "type_filling": filling,
             }
-            if broker_expiry:
+            # Let the broker expire unfilled orders if it supports that (works even when the
+            # bot is off); expire_pending() below covers brokers that do not.
+            if pending and cfg.pending_expiry_minutes > 0 and getattr(info, "expiration_mode", 0) & 4:
                 req["type_time"] = mt5.ORDER_TIME_SPECIFIED
                 req["expiration"] = int(tick.time) + cfg.pending_expiry_minutes * 60
             kind = f"{sig.side.upper()} LIMIT/STOP" if pending else sig.side.upper()

@@ -392,3 +392,49 @@ def test_status_lines():
                           "Today: +2.2%  (new trades stop at -50%)"]
     m.terminal_info = lambda: None
     assert "NOT reachable" in t.status()[0]
+
+
+# --- where in the entry zone ------------------------------------------------------
+BUYZONE = dict(side="buy", symbol="XAUUSD", sl=3866.0, tps=[3878.0, 3882.0, 3910.0], entry=3872.5,
+               entry_low=3871.0, entry_high=3874.0)          # the channel's "Buy XAUUSD 3874-3871"
+entries = lambda m: [(r["action"], r["price"], r["tp"]) for r in m.sent]
+
+
+def test_layered_entries_spread_across_the_zone():
+    t, m = make(FakeMT5(bid=3876.0, ask=3876.2), risk_mode="fixed", fixed_lot=0.03, entry_mode="layered")
+    t.execute(Signal(**BUYZONE))
+    assert entries(m) == [(5, 3874.0, 3878.0), (5, 3872.5, 3882.0), (5, 3871.0, 3910.0)]
+    assert {r["type"] for r in m.sent} == {m.ORDER_TYPE_BUY_LIMIT} and {r["sl"] for r in m.sent} == {3866.0}
+
+
+def test_layered_entries_when_price_is_already_inside_the_zone():
+    t, m = make(FakeMT5(bid=3872.8, ask=3873.0), risk_mode="fixed", fixed_lot=0.03, entry_mode="layered")
+    t.execute(Signal(**BUYZONE))                # 3874 and 3872.5 are reached: buy now; 3871 still waits
+    assert entries(m) == [(1, 3873.0, 3878.0), (1, 3873.0, 3882.0), (5, 3871.0, 3910.0)]
+
+
+def test_best_entry_waits_at_the_far_edge():
+    t, m = make(FakeMT5(bid=3876.0, ask=3876.2), risk_mode="fixed", fixed_lot=0.03, entry_mode="best")
+    t.execute(Signal(**BUYZONE))
+    assert entries(m) == [(5, 3871.0, 3878.0), (5, 3871.0, 3882.0), (5, 3871.0, 3910.0)]
+    t, m = make(FakeMT5(bid=3870.9, ask=3871.1), risk_mode="fixed", fixed_lot=0.03, entry_mode="best")
+    t.execute(Signal(**BUYZONE))                # price is already at the best level: buy now
+    assert [r["action"] for r in m.sent] == [1, 1, 1]
+
+
+def test_layered_sell_zone_and_two_positions():
+    t, m = make(FakeMT5(bid=3852.0, ask=3852.2), risk_mode="fixed", fixed_lot=0.03, entry_mode="layered")
+    t.execute(Signal(**ZONE))                   # Sell 3855-3858
+    assert entries(m) == [(5, 3855.0, 3850.0), (5, 3856.5, 3845.0), (5, 3858.0, 3810.0)]
+    assert {r["type"] for r in m.sent} == {m.ORDER_TYPE_SELL_LIMIT}
+    t, m = make(FakeMT5(bid=3852.0, ask=3852.2), risk_mode="fixed", fixed_lot=0.02, entry_mode="layered")
+    t.execute(Signal(**ZONE))                   # only two positions: edge and best price
+    assert entries(m) == [(5, 3855.0, 3850.0), (5, 3858.0, 3845.0)]
+
+
+def test_entry_mode_does_not_change_single_price_or_explicit_limit_signals():
+    for mode in ("edge", "layered", "best"):
+        t, m = make(FakeMT5(bid=3876.0, ask=3876.2), risk_mode="fixed", fixed_lot=0.03, entry_mode=mode)
+        t.execute(Signal("buy", "XAUUSD", 3866.0, [3878.0, 3882.0], 3872.0, False, 3872.0, 3872.0))
+        t.execute(Signal("buy", "XAUUSD", 3866.0, [3878.0], 3870.0, True, 3869.0, 3871.0))
+        assert [r["price"] for r in m.sent] == [3872.0, 3872.0, 3870.0]
