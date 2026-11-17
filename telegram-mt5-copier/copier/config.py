@@ -13,6 +13,7 @@ class TelegramCfg:
     session: str = "copier"
     chats: list = field(default_factory=list)   # chat ids, @usernames or exact titles
     notify: bool = True                         # send results to your Saved Messages
+    daily_summary_time: str = "22:00"           # send the day's result at this time, Mon-Fri; "" = off
     max_signal_age_seconds: int = 120
     edit_grace_seconds: int = 900               # a message we could not use may still be corrected by an edit this long after posting
 

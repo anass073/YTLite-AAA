@@ -5,6 +5,7 @@ telegram:
   api_hash: "your_api_hash"
   chats: [-1001234567890]        # signal group id (run: python -m copier --list-chats), @username or exact title
   notify: true                   # send every result to your own Saved Messages
+  daily_summary_time: "22:00"    # send the day's result to Saved Messages at this time, Mon-Fri ("" = off)
   max_signal_age_seconds: 120    # ignore anything older than this
   edit_grace_seconds: 900        # ...unless it is a message the bot saw live and the channel then corrects by editing
 

@@ -422,6 +422,23 @@ class Trader:
                          f"-{cfg.max_daily_loss_percent:g}%)")
         return lines
 
+    def trades(self) -> list[str]:
+        """One line per open position and waiting order of the bot (for /trades)."""
+        mt5 = self.mt5
+        acc = mt5.account_info()
+        currency = acc.currency if acc is not None else ""
+        names = {mt5.ORDER_TYPE_BUY_LIMIT: "BUY LIMIT", mt5.ORDER_TYPE_SELL_LIMIT: "SELL LIMIT",
+                 mt5.ORDER_TYPE_BUY_STOP: "BUY STOP", mt5.ORDER_TYPE_SELL_STOP: "SELL STOP"}
+        label = lambda item: f"TP{self._tp_index(item.comment)}" if self._tp_index(item.comment) else ""
+        out = []
+        for p in self._mine(mt5.positions_get(), None):
+            out.append(f"{'BUY' if self._is_buy(p) else 'SELL'} {p.volume} {p.symbol} @ {p.price_open}  "
+                       f"sl {p.sl or '-'}  tp {p.tp or '-'}  {getattr(p, 'profit', 0.0):+.2f} {currency}  {label(p)}".rstrip())
+        for o in self._mine(mt5.orders_get(), None):
+            out.append(f"waiting: {names.get(o.type, 'ORDER')} {o.volume_current} {o.symbol} @ {o.price_open}  "
+                       f"sl {o.sl or '-'}  tp {o.tp or '-'}  {label(o)}".rstrip())
+        return out or ["No open positions or waiting orders from the bot."]
+
     def housekeeping(self) -> list[str]:
         """Called every few seconds: queued breakevens and expired pending orders."""
         out = self.retry_breakeven()

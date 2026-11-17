@@ -43,7 +43,7 @@ def skipped_from_log(log_text: str, since: datetime) -> dict[str, int]:
 
 
 def build_report(deals, orders, positions, balance: float, currency: str, magic: int,
-                 skipped: dict[str, int] | None = None, days: int = 30) -> str:
+                 skipped: dict[str, int] | None = None, days: int = 30, title: str | None = None) -> str:
     deals = sorted(deals or (), key=lambda d: d.time)
     trades = [d for d in deals if d.type in (0, 1)]                 # buys and sells, not deposits
     # The deal that opens a position carries the bot's tag; later deals share its position id.
@@ -73,7 +73,7 @@ def build_report(deals, orders, positions, balance: float, currency: str, magic:
 
     eps = max(0.0025 * balance, 0.01)                               # "breakeven" = within this of zero
     money = lambda x: f"{x:+.2f} {currency}"
-    out = [f"Results for the last {days} days  (trades opened by the bot, broker time)", ""]
+    out = [title or f"Results for the last {days} days  (trades opened by the bot, broker time)", ""]
     if not signals:
         out.append("No bot trades in this period.")
     else:
@@ -119,15 +119,15 @@ def build_report(deals, orders, positions, balance: float, currency: str, magic:
     return "\n".join(out)
 
 
-def collect(mt5, cfg, days: int) -> str:
+def collect(mt5, cfg, days: int, since: datetime | None = None, title: str | None = None) -> str:
     """Build the report over an already connected terminal."""
-    since = datetime.now() - timedelta(days=days)
+    since = since or datetime.now() - timedelta(days=days)
     until = datetime.now() + timedelta(days=1)
     acc = mt5.account_info()
     log = Path("copier.log")
     skipped = skipped_from_log(log.read_text(encoding="utf-8", errors="replace"), since) if log.exists() else {}
     return build_report(mt5.history_deals_get(since, until), mt5.history_orders_get(since, until),
-                        mt5.positions_get(), acc.balance, acc.currency, cfg.trading.magic, skipped, days)
+                        mt5.positions_get(), acc.balance, acc.currency, cfg.trading.magic, skipped, days, title)
 
 
 def run(cfg, days: int) -> str:

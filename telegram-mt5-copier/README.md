@@ -104,16 +104,26 @@ status updates such as "TP1 hit", are ignored.
 - **Safety** – `max_open_trades`, `allowed_symbols`, a stop loss is always required,
   each message is traded once, and old messages are ignored.
 
-## Check on it from your phone
+## Control it from your phone
 
-Send one of these to your own **Saved Messages** in Telegram and the bot answers there:
+Send one of these to your own **Saved Messages** in Telegram and the bot answers there.
+Only you can use them. No answer within a few seconds means the bot is not running.
 
-- `/status` – whether it is running, live or dry run, the MT5 connection, your balance,
-  open trades and waiting orders, today's result, and when the channel last posted
-- `/report` – the results report below for the last 30 days (`/report 7` for 7 days)
-- `/help` – the list of commands
+| Command | What it does |
+|---|---|
+| `/status` | Running or paused, live or dry run, MT5 connection, balance, open trades, today's result, last channel message |
+| `/trades` | Every open position and waiting order with entry, SL, TP and current profit |
+| `/report` | The results report for the last 30 days (`/report 7` for 7 days) |
+| `/last` | The last 15 lines of the log (`/last 30` for more) |
+| `/pause` / `/resume` | Stop / start taking new signals. Open trades stay managed. Survives a restart. |
+| `/breakeven` | Move all bot positions to breakeven now |
+| `/cancel` | Remove the bot's waiting limit orders |
+| `/closeall` | Close all bot positions and remove waiting orders, immediately and without asking |
+| `/risk` | Show the size per signal. `/risk 0.02` changes it; raising it needs `/risk 0.05 confirm`; `/risk reset` goes back to `config.yaml`. Capped by `max_lot`. Survives a restart. |
+| `/help` | This list |
 
-No answer within a few seconds means the bot is not running.
+**Daily summary** – every weekday at `daily_summary_time` (default 22:00, PC time) the bot
+sends the day's result per signal to your Saved Messages. Set it to `""` to turn it off.
 
 ## Results report
 
