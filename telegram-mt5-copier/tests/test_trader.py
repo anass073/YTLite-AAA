@@ -488,3 +488,33 @@ def test_auto_breakeven_failure_is_reported_once_then_retried_quietly():
     t, _ = make(m, auto_breakeven_at=0.4)
     assert "FAILED auto breakeven" in t.housekeeping()[0]
     assert "was queued" in t.housekeeping()[0] and m.sent[-1]["sl"] == 3890.0
+
+
+# --- trailing stop -------------------------------------------------------------------
+def test_trailing_stop_follows_price_in_profit_only():
+    m = buys(FakeMT5(bid=3893.0, ask=3893.2)); m.open = m.open[2:]          # the TP3 runner: buy 3890, sl 3882
+    p = m.open[0]
+    t, _ = make(m, trailing_stop_percent=0.1)                               # about 3.9 behind the price
+    assert t.housekeeping() == [] and m.sent == []                          # 3889.1 would still be a loss
+    m.bid = 3895.0
+    report = t.housekeeping()
+    assert len(report) == 1 and "trailing stop" in report[0]
+    assert m.sent[-1]["position"] == 3 and m.sent[-1]["tp"] == 3930.0
+    assert m.sent[-1]["sl"] == pytest.approx(3891.1, abs=0.011)
+    p.sl = m.sent[-1]["sl"]; sent = len(m.sent)
+    m.bid = 3895.2                                                          # tiny move: leave it
+    assert t.housekeeping() == [] and len(m.sent) == sent
+    m.bid = 3897.0                                                          # follows up, reported once only
+    assert t.housekeeping() == [] and m.sent[-1]["sl"] == pytest.approx(3893.1, abs=0.011)
+    p.sl = m.sent[-1]["sl"]; sent = len(m.sent)
+    m.bid = 3894.0                                                          # price falls back: never loosens
+    assert t.housekeeping() == [] and len(m.sent) == sent
+
+
+def test_trailing_stop_for_sells_and_off_by_default():
+    m = FakeMT5(bid=3849.8, ask=3850.0); m.open = [pos(1, "tg-42-3")]       # sell @3856, sl 3863
+    t, _ = make(m, trailing_stop_percent=0.1)
+    t.housekeeping()
+    assert m.sent[-1]["sl"] == pytest.approx(3853.85, abs=0.011) and m.sent[-1]["sl"] < 3856.0
+    m2 = buys(FakeMT5(bid=3920.0, ask=3920.2)); t2, _ = make(m2)
+    assert t2.housekeeping() == [] and m2.sent == []

@@ -35,6 +35,7 @@ trading:
   limit_if_away_from_entry: true # price not at the entry zone yet -> limit order at the edge of the zone
   breakeven_offset: 0.0          # breakeven stop this far in profit, as a fraction of the stop distance (0.05 of an 8-point stop = 0.40)
   auto_breakeven_at: 0.0         # bot sets breakeven by itself once price is this fraction of the stop distance in profit (0 = only when the channel says so)
+  trailing_stop_percent: 0.0     # trailing stop: follow the price at this % of the price (0.1 = about 3.90 on gold at 3900); 0 = off
   breakeven_cancels_pending: false # "set breakeven" also removes this signal's limit orders that have not filled yet
   cancel_closes_positions: false # "cancel it" removes pending orders; true = also close open trades
   pending_expiry_minutes: 120    # cancel unfilled limit/stop orders after N minutes (0 = never)

@@ -23,6 +23,8 @@ class Trader:
             import MetaTrader5 as mt5  # Windows only; imported lazily so the parser works anywhere
         self.mt5, self.cfg, self.mt5_cfg = mt5, cfg, mt5_cfg
         self._be_wanted: set[int] = set()   # positions waiting for price to allow a breakeven stop
+        self._trailing: set[int] = set()    # positions whose trailing stop has started (announced once)
+        self._trail_failed: set[int] = set()
 
     def connect(self) -> str:
         c, kw = self.mt5_cfg, {}
@@ -479,6 +481,41 @@ class Trader:
                          f"-{cfg.max_daily_loss_percent:g}%)")
         return lines
 
+    def trail_stops(self) -> list[str]:
+        """Trailing stop: keep the stop trailing_stop_percent (of the price) behind the market.
+        It starts only once that locks in a profit, and only ever moves in the profit direction."""
+        pct = self.cfg.trailing_stop_percent
+        if pct <= 0:
+            return []
+        mt5, out = self.mt5, []
+        for p in self._mine(mt5.positions_get(), None):
+            tick, info = mt5.symbol_info_tick(p.symbol), mt5.symbol_info(p.symbol)
+            if tick is None or info is None:
+                continue
+            buy = self._is_buy(p)
+            market = tick.bid if buy else tick.ask
+            distance = market * pct / 100
+            stop = round(market - distance if buy else market + distance, info.digits)
+            if (stop < p.price_open) if buy else (stop > p.price_open):
+                continue                                    # would not lock in a profit yet
+            step = distance * 0.1                           # do not pester the broker with tiny moves
+            if p.sl and ((stop < p.sl + step) if buy else (stop > p.sl - step)):
+                continue
+            ok, detail = self._try({"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket,
+                                    "symbol": p.symbol, "sl": stop, "tp": p.tp})
+            if ok:
+                self._be_wanted.discard(p.ticket)
+                self._trail_failed.discard(p.ticket)
+                line = f"OK trailing stop: {p.symbol} #{p.ticket} SL moved to {stop}"
+                log.info(line)
+                if p.ticket not in self._trailing:          # tell the user once, then only log
+                    self._trailing.add(p.ticket)
+                    out.append(line + " - it now follows the price (further moves are in the log only)")
+            elif p.ticket not in self._trail_failed:
+                self._trail_failed.add(p.ticket)
+                log.warning("Trailing stop failed on %s #%s: %s", p.symbol, p.ticket, detail)
+        return out
+
     def trades(self) -> list[str]:
         """One line per open position and waiting order of the bot (for /trades)."""
         mt5 = self.mt5
@@ -501,7 +538,7 @@ class Trader:
         out = self.retry_breakeven() + self.auto_breakeven()
         for line in out:
             log.info(line)
-        return out + self.expire_pending()
+        return out + self.trail_stops() + self.expire_pending()
 
     def expire_pending(self) -> list[str]:
         """Cancel the bot's pending orders older than pending_expiry_minutes."""

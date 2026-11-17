@@ -110,6 +110,10 @@ status updates such as "TP1 hit", are ignored.
   (every 2 seconds) and moves a position to breakeven once it is that fraction of its
   stop distance in profit (`0.4` on an 8-point stop = 3.20 in profit), without waiting
   for the channel. Only while the bot is running.
+- **Trailing stop** – with `trailing_stop_percent` the stop follows the price at that
+  distance (`0.1` = 0.1% of the price, about 3.90 on gold at 3900). It starts only once
+  that distance locks in a profit, and only ever moves in the profit direction. It does
+  not protect a trade that goes against you from the start: the original stop does that.
 - **Edited signals** – if the channel edits the SL or TPs of a signal the bot traded,
   its positions and pending orders are moved to the new levels (a stop already at
   breakeven is left alone). Only works for signals traded since the bot last started.
