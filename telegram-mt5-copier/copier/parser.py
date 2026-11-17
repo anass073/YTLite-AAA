@@ -148,7 +148,7 @@ BREAKEVEN_RE = re.compile(
     r"|\b(?:set|move|put|sl)\b(?:\s+(?:the|your|sl|stop|to|at|on)){0,3}\s+b/?e\b"   # "move SL to BE"
     r"|\bsl\s+(?:to|at)\s+entry\b", re.I)
 MOVE_SL_RE = re.compile(
-    rf"\bmov\w{0,3}\s+(?:the\s+|your\s+)?(?:sl|stop(?:\s*loss)?)\s*(?:at|to|a|@|=|:)?\s*({NUM})", re.I)
+    rf"\bmov\w{{0,3}}\s+(?:the\s+|your\s+)?(?:sl|stop(?:\s*loss)?)\s*(?:at|to|a|@|=|:)?\s*({NUM})", re.I)
 TAKE_TP_RE = re.compile(rf"\btak\w{{0,3}}\s+(?:the\s+)?tp\s*(\d)\b(?:\s*(?:at|to|a|@|=|:)?\s*({NUM})\b)?", re.I)
 ENTER_NOW_RE = re.compile(r"\b(buy|sell)\s+(?:[\w/]+\s+)?now\b|\bactiv\w*\s+(buy|sell)\b", re.I)
 CANCEL_RE = re.compile(r"^\W*cancel\b|\bcancel\s+(?:it|this|the|that|order|trade|signal)\b", re.I)
